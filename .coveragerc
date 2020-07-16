@@ -1,0 +1,8 @@
+[run]
+omit =
+    # Virtual environment
+    .venv/*
+    # Virtual environment in Travis CI
+    /home/travis/virtualenv/*
+    # Tests
+    tests/*
