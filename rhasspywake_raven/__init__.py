@@ -1,4 +1,5 @@
 """Implementation of Snips Personal Wake Word Detector."""
+import logging
 import math
 import typing
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ import python_speech_features
 import scipy.io.wavfile
 from dtw import dtw
 from rhasspysilence import WebRtcVadRecorder
+
+_LOGGER = logging.getLogger("rhasspy-wake-raven")
 
 
 class RavenState(int, Enum):
@@ -47,22 +50,26 @@ class Raven:
         self,
         templates: typing.List[Template],
         distance_threshold: float,
+        dtw_window_size: int = 5,
         sample_rate: int = 16000,
         chunk_size: int = 960,
         shift_sec: float = 0.05,
         refractory_sec: float = 2.0,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
+        debug: bool = False,
     ):
         self.templates = templates
         assert self.templates, "No templates"
 
         self.distance_threshold = distance_threshold
+        self.dtw_window_size = dtw_window_size
         self.chunk_size = chunk_size
         self.shift_sec = shift_sec
         self.sample_rate = sample_rate
 
         # Assume 16-bit samples
         self.sample_width = 2
+        self.chunk_seconds = (self.chunk_size / self.sample_width) / self.sample_rate
 
         # Use or create silence detector
         self.recorder = recorder or WebRtcVadRecorder()
@@ -101,6 +108,8 @@ class Raven:
         self.silence_chunks_left = 0
         self.num_refractory_chunks = self.seconds_to_chunks(refractory_sec)
         self.refractory_chunks_left = 0
+
+        self.debug = debug
 
     def process_chunk(self, chunk: bytes) -> typing.List[int]:
         """Process a single chunk of raw audio data.
@@ -180,8 +189,24 @@ class Raven:
         frame_mfcc = python_speech_features.mfcc(frame, self.sample_rate)
 
         for i, template in enumerate(self.templates):
-            alignment = dtw(frame_mfcc, template.mfcc, distance_only=True)
+            alignment = dtw(
+                frame_mfcc,
+                template.mfcc,
+                distance_only=True,
+                window_type="slantedband",
+                window_args={"window_size": self.dtw_window_size},
+            )
+
             distance = alignment.distance / (len(frame_mfcc) + len(template.mfcc))
+
+            if self.debug:
+                _LOGGER.debug(
+                    "Distance for template %s: %s (raw=%s)",
+                    i,
+                    distance,
+                    alignment.distance,
+                )
+
             self.last_distances[i] = distance
 
             if distance < self.distance_threshold:

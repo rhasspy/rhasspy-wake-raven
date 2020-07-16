@@ -48,6 +48,12 @@ def main():
         help="Seconds to shift sliding time window on audio buffer (default: 0.05)",
     )
     parser.add_argument(
+        "--dtw-window-size",
+        type=int,
+        default=5,
+        help="Size of band around slanted diagonal during dynamic time warping calculation (default: 5)",
+    )
+    parser.add_argument(
         "--vad-sensitivity",
         type=int,
         choices=[1, 2, 3],
@@ -104,6 +110,7 @@ def main():
         distance_threshold=args.distance_threshold,
         refractory_sec=args.refractory_seconds,
         shift_sec=args.window_shift_seconds,
+        debug=args.debug,
     )
 
     print("Reading 16-bit 16Khz raw audio from stdin...", file=sys.stderr)
