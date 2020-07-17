@@ -9,7 +9,7 @@ import time
 from rhasspysilence import WebRtcVadRecorder
 from rhasspysilence.const import SilenceMethod
 
-from . import Raven
+from . import Raven, Template
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
 
@@ -89,6 +89,11 @@ def main():
         help="Method for detecting silence",
     )
     parser.add_argument(
+        "--average-templates",
+        action="store_true",
+        help="Average wakeword templates together to reduce number of calculations",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -109,6 +114,9 @@ def main():
 
     # Load audio templates
     templates = [Raven.wav_to_template(p, name=p) for p in args.templates]
+    if args.average_templates:
+        _LOGGER.debug("Averaging %s templates", len(templates))
+        templates = [Template.average_templates(templates)]
 
     # Create Raven object
     raven = Raven(

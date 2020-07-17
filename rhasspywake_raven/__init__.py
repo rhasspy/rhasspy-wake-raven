@@ -8,8 +8,9 @@ from enum import Enum
 import numpy as np
 import python_speech_features
 import scipy.io.wavfile
-from dtw import dtw
 from rhasspysilence import WebRtcVadRecorder
+
+from .dtw import DynamicTimeWarping
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
 
@@ -30,6 +31,55 @@ class Template:
     mfcc: np.ndarray
     name: str = ""
 
+    @staticmethod
+    def average_templates(
+        templates: "typing.List[Template]", name: str = ""
+    ) -> "Template":
+        """Averages multiple templates piecewise into a single template.
+
+        Credit to: https://github.com/mathquis/node-personal-wakeword
+        """
+        assert templates, "No templates"
+        if len(templates) == 1:
+            # Only one template
+            return templates[0]
+
+        # Use longest template as base
+        templates = sorted(templates, key=lambda t: len(t.mfcc), reverse=True)
+        base_template = templates[0]
+
+        name = name or base_template.name
+        base_mfcc: np.ndarray = base_template.mfcc
+        rows, cols = base_mfcc.shape
+        averages = [
+            [[base_mfcc[row][col]] for col in range(cols)] for row in range(rows)
+        ]
+
+        dtw = DynamicTimeWarping()
+
+        # Collect features
+        for template in templates[1:]:
+            dtw.compute_cost(template.mfcc, base_mfcc)
+            path = dtw.compute_path()
+            assert path is not None, "Failed to get DTW path"
+            for row, col in path:
+                for i, feature in enumerate(template.mfcc[row]):
+                    averages[col][i].append(feature)
+
+        # Average features
+        avg_mfcc = np.array(
+            [
+                [np.mean(averages[row][col]) for col in range(cols)]
+                for row in range(rows)
+            ]
+        )
+
+        assert avg_mfcc.shape == base_mfcc.shape, "Wrong MFCC shape"
+
+        return Template(
+            duration_sec=base_template.duration_sec, mfcc=avg_mfcc, name=name
+        )
+
 
 class Raven:
     """
@@ -48,6 +98,7 @@ class Raven:
         templates: typing.List[Template],
         probability_threshold: typing.Tuple[float, float] = (0.45, 0.55),
         distance_threshold: float = 0.22,
+        dtw: typing.Optional[DynamicTimeWarping] = None,
         dtw_window_size: int = 5,
         sample_rate: int = 16000,
         chunk_size: int = 960,
@@ -61,7 +112,6 @@ class Raven:
 
         self.probability_threshold = probability_threshold
         self.distance_threshold = distance_threshold
-        self.dtw_window_size = dtw_window_size
         self.chunk_size = chunk_size
         self.shift_sec = shift_sec
         self.sample_rate = sample_rate
@@ -72,6 +122,10 @@ class Raven:
 
         # Use or create silence detector
         self.recorder = recorder or WebRtcVadRecorder()
+
+        # Dynamic time warping calculation
+        self.dtw = dtw or DynamicTimeWarping()
+        self.dtw_window_size = dtw_window_size
 
         # Keep previously-computed distances and probabilities for debugging
         self.last_distances: typing.List[typing.Optional[float]] = [
@@ -192,20 +246,28 @@ class Raven:
         frame_mfcc = python_speech_features.mfcc(frame, self.sample_rate)
 
         for i, template in enumerate(self.templates):
-            alignment = dtw(
-                template.mfcc,
-                frame_mfcc,
-                distance_only=True,
-                dist_method="cosine",
-                window_type="slantedband",
-                window_args={"window_size": self.dtw_window_size},
+            # alignment = dtw(
+            #     template.mfcc,
+            #     frame_mfcc,
+            #     distance_only=True,
+            #     dist_method="cosine",
+            #     window_type="slantedband",
+            #     window_args={"window_size": self.dtw_window_size},
+            # )
+
+            # distance = alignment.distance / (len(frame_mfcc) + len(template.mfcc))
+
+            distance = self.dtw.compute_cost(
+                template.mfcc, frame_mfcc, self.dtw_window_size
             )
 
-            distance = alignment.distance / (len(frame_mfcc) + len(template.mfcc))
+            normalized_distance = distance / (len(frame_mfcc) + len(template.mfcc))
+
             probability = 1 / (
                 1
                 + math.exp(
-                    (distance - self.distance_threshold) / self.distance_threshold
+                    (normalized_distance - self.distance_threshold)
+                    / self.distance_threshold
                 )
             )
 
@@ -214,11 +276,11 @@ class Raven:
                     "Template %s: prob=%s, norm_dist=%s, dist=%s",
                     i,
                     probability,
+                    normalized_distance,
                     distance,
-                    alignment.distance,
                 )
 
-            self.last_distances[i] = distance
+            self.last_distances[i] = normalized_distance
             self.last_probabilities[i] = probability
 
             if (

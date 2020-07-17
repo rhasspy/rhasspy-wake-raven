@@ -5,7 +5,6 @@ Wakeword detector based on the [Snips Personal Wake Word Detector](https://mediu
 ## Dependencies
 
 * Python 3.7
-* `dtw-python` for [Dynamic Time Warping](https://dynamictimewarping.github.io/python/) calculation
 * `python-speech-features` for [MFCC](https://python-speech-features.readthedocs.io/en/latest/) computation
 * `rhasspy-silence` for [silence detection](https://github.com/rhasspy/rhasspy-silence)
 
@@ -59,3 +58,64 @@ Raven outputs a line of JSON when the wake word is detected. Fields are:
     * `distance_threshold` - distance threshold used for comparison
     * `matches` - number of WAV templates that matched
     * `tick` - monotonic counter incremented for each detection
+
+## Command-Line Interface
+
+```
+usage: rhasspy-wake-raven [-h]
+                          [--probability-threshold PROBABILITY_THRESHOLD PROBABILITY_THRESHOLD]
+                          [--distance-threshold DISTANCE_THRESHOLD]
+                          [--minimum-matches MINIMUM_MATCHES]
+                          [--refractory-seconds REFRACTORY_SECONDS]
+                          [--print-all-matches]
+                          [--window-shift-seconds WINDOW_SHIFT_SECONDS]
+                          [--dtw-window-size DTW_WINDOW_SIZE]
+                          [--vad-sensitivity {1,2,3}]
+                          [--current-threshold CURRENT_THRESHOLD]
+                          [--max-energy MAX_ENERGY]
+                          [--max-current-ratio-threshold MAX_CURRENT_RATIO_THRESHOLD]
+                          [--silence-method {vad_only,ratio_only,current_only,vad_and_ratio,vad_and_current,all}]
+                          [--average-templates] [--debug]
+                          templates [templates ...]
+
+positional arguments:
+  templates             Path to WAV file templates
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --probability-threshold PROBABILITY_THRESHOLD PROBABILITY_THRESHOLD
+                        Probability range where detection occurs (default:
+                        (0.45, 0.55))
+  --distance-threshold DISTANCE_THRESHOLD
+                        Normalized dynamic time warping distance threshold for
+                        template matching (default: 0.22)
+  --minimum-matches MINIMUM_MATCHES
+                        Number of templates that must match to produce output
+                        (default: 1)
+  --refractory-seconds REFRACTORY_SECONDS
+                        Seconds before wake word can be activated again
+                        (default: 2)
+  --print-all-matches   Print JSON for all matching templates instead of just
+                        the first one
+  --window-shift-seconds WINDOW_SHIFT_SECONDS
+                        Seconds to shift sliding time window on audio buffer
+                        (default: 0.05)
+  --dtw-window-size DTW_WINDOW_SIZE
+                        Size of band around slanted diagonal during dynamic
+                        time warping calculation (default: 5)
+  --vad-sensitivity {1,2,3}
+                        Webrtcvad VAD sensitivity (1-3)
+  --current-threshold CURRENT_THRESHOLD
+                        Debiased energy threshold of current audio frame
+  --max-energy MAX_ENERGY
+                        Fixed maximum energy for ratio calculation (default:
+                        observed)
+  --max-current-ratio-threshold MAX_CURRENT_RATIO_THRESHOLD
+                        Threshold of ratio between max energy and current
+                        audio frame
+  --silence-method {vad_only,ratio_only,current_only,vad_and_ratio,vad_and_current,all}
+                        Method for detecting silence
+  --average-templates   Average wakeword templates together to reduce number
+                        of calculations
+  --debug               Print DEBUG messages to the console
+```
