@@ -19,10 +19,17 @@ def main():
     parser = argparse.ArgumentParser(prog="rhasspy-wake-raven")
     parser.add_argument("templates", nargs="+", help="Path to WAV file templates")
     parser.add_argument(
+        "--probability-threshold",
+        type=float,
+        nargs=2,
+        default=[0.45, 0.55],
+        help="Probability range where detection occurs (default: (0.45, 0.55))",
+    )
+    parser.add_argument(
         "--distance-threshold",
         type=float,
-        required=True,
-        help="Normalized dynamic time warping distance threshold for template matching",
+        default=0.22,
+        help="Normalized dynamic time warping distance threshold for template matching (default: 0.22)",
     )
     parser.add_argument(
         "--minimum-matches",
@@ -107,6 +114,7 @@ def main():
     raven = Raven(
         templates=templates,
         recorder=recorder,
+        probability_threshold=tuple(args.probability_threshold),
         distance_threshold=args.distance_threshold,
         refractory_sec=args.refractory_seconds,
         shift_sec=args.window_shift_seconds,
@@ -132,6 +140,7 @@ def main():
                 for template_index in matching_indexes:
                     template = raven.templates[template_index]
                     distance = raven.last_distances[template_index]
+                    probability = raven.last_probabilities[template_index]
 
                     print(
                         json.dumps(
@@ -140,8 +149,10 @@ def main():
                                 "detect_seconds": detect_time - start_time,
                                 "detect_timestamp": detect_time,
                                 "raven": {
+                                    "probability": probability,
                                     "distance": distance,
-                                    "threshold": raven.distance_threshold,
+                                    "probability_threshold": args.probability_threshold,
+                                    "distance_threshold": raven.distance_threshold,
                                     "tick": detect_tick,
                                     "matches": len(matching_indexes),
                                 },

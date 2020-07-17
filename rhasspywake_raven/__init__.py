@@ -41,15 +41,13 @@ class Raven:
 
     templates: List[Template]
         Wake word templates created from pre-trimmed WAV files
-
-    distance_threshold: float = 40
-
     """
 
     def __init__(
         self,
         templates: typing.List[Template],
-        distance_threshold: float,
+        probability_threshold: typing.Tuple[float, float] = (0.45, 0.55),
+        distance_threshold: float = 0.22,
         dtw_window_size: int = 5,
         sample_rate: int = 16000,
         chunk_size: int = 960,
@@ -61,6 +59,7 @@ class Raven:
         self.templates = templates
         assert self.templates, "No templates"
 
+        self.probability_threshold = probability_threshold
         self.distance_threshold = distance_threshold
         self.dtw_window_size = dtw_window_size
         self.chunk_size = chunk_size
@@ -74,8 +73,12 @@ class Raven:
         # Use or create silence detector
         self.recorder = recorder or WebRtcVadRecorder()
 
-        # Keep previously-computed distances for debugging
+        # Keep previously-computed distances and probabilities for debugging
         self.last_distances: typing.List[typing.Optional[float]] = [
+            None for _ in self.templates
+        ]
+
+        self.last_probabilities: typing.List[typing.Optional[float]] = [
             None for _ in self.templates
         ]
 
@@ -190,26 +193,39 @@ class Raven:
 
         for i, template in enumerate(self.templates):
             alignment = dtw(
-                frame_mfcc,
                 template.mfcc,
+                frame_mfcc,
                 distance_only=True,
+                dist_method="cosine",
                 window_type="slantedband",
                 window_args={"window_size": self.dtw_window_size},
             )
 
             distance = alignment.distance / (len(frame_mfcc) + len(template.mfcc))
+            probability = 1 / (
+                1
+                + math.exp(
+                    (distance - self.distance_threshold) / self.distance_threshold
+                )
+            )
 
             if self.debug:
                 _LOGGER.debug(
-                    "Distance for template %s: %s (raw=%s)",
+                    "Template %s: prob=%s, norm_dist=%s, dist=%s",
                     i,
+                    probability,
                     distance,
                     alignment.distance,
                 )
 
             self.last_distances[i] = distance
+            self.last_probabilities[i] = probability
 
-            if distance < self.distance_threshold:
+            if (
+                self.probability_threshold[0]
+                < probability
+                < self.probability_threshold[1]
+            ):
                 matching_indexes.append(i)
 
         return matching_indexes
