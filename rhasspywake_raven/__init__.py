@@ -173,6 +173,12 @@ class Raven:
 
         Must be the same length as self.chunk_size.
 
+        Attributes
+        ----------
+
+        chunk: bytes
+          Raw audio chunk with one or more windows
+
         Returns
         -------
 
@@ -232,6 +238,7 @@ class Raven:
                     self.refractory_chunks_left = self.num_refractory_chunks
                     return matching_indexes
 
+        # No detections
         return []
 
     def _process_frame(self, frame: np.ndarray) -> typing.List[int]:
@@ -246,23 +253,15 @@ class Raven:
         frame_mfcc = python_speech_features.mfcc(frame, self.sample_rate)
 
         for i, template in enumerate(self.templates):
-            # alignment = dtw(
-            #     template.mfcc,
-            #     frame_mfcc,
-            #     distance_only=True,
-            #     dist_method="cosine",
-            #     window_type="slantedband",
-            #     window_args={"window_size": self.dtw_window_size},
-            # )
-
-            # distance = alignment.distance / (len(frame_mfcc) + len(template.mfcc))
-
+            # Compute optimal distance with a window
             distance = self.dtw.compute_cost(
                 template.mfcc, frame_mfcc, self.dtw_window_size
             )
 
+            # Normalize by sum of temporal dimensions
             normalized_distance = distance / (len(frame_mfcc) + len(template.mfcc))
 
+            # Compute detection probability
             probability = 1 / (
                 1
                 + math.exp(
@@ -280,6 +279,7 @@ class Raven:
                     distance,
                 )
 
+            # Keep calculations results for debugging
             self.last_distances[i] = normalized_distance
             self.last_probabilities[i] = probability
 
@@ -288,6 +288,7 @@ class Raven:
                 < probability
                 < self.probability_threshold[1]
             ):
+                # Detection occured
                 matching_indexes.append(i)
 
         return matching_indexes

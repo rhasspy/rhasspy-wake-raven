@@ -94,6 +94,11 @@ def main():
         help="Average wakeword templates together to reduce number of calculations",
     )
     parser.add_argument(
+        "--exit-count",
+        type=int,
+        help="Exit after some number of detections (default: never)",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -137,6 +142,16 @@ def main():
         while True:
             # Read raw audio chunk
             chunk = sys.stdin.buffer.read(raven.chunk_size)
+            if not chunk:
+                # Empty chunk
+                break
+
+            # Ensure chunk is the right size
+            while len(chunk) < raven.chunk_size:
+                chunk += sys.stdin.buffer.read(raven.chunk_size - len(chunk))
+                if not chunk:
+                    # Empty chunk
+                    break
 
             # Get matching audio templates (if any)
             matching_indexes = raven.process_chunk(chunk)
@@ -171,6 +186,10 @@ def main():
                     if not args.print_all_matches:
                         # Only print first match
                         break
+
+            # Check if we need to exit
+            if (args.exit_count is not None) and (detect_tick >= args.exit_count):
+                break
 
     except KeyboardInterrupt:
         pass
