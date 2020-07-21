@@ -5,11 +5,14 @@ import json
 import logging
 import sys
 import time
+import typing
+from pathlib import Path
 
 from rhasspysilence import WebRtcVadRecorder
 from rhasspysilence.const import SilenceMethod
 
 from . import Raven, Template
+from .utils import buffer_to_wav, trim_silence
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
 
@@ -17,7 +20,13 @@ _LOGGER = logging.getLogger("rhasspy-wake-raven")
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(prog="rhasspy-wake-raven")
-    parser.add_argument("templates", nargs="+", help="Path to WAV file templates")
+    parser.add_argument(
+        "templates", nargs="+", help="Path to WAV file templates or directories"
+    )
+    parser.add_argument(
+        "--record",
+        help="Record example templates with given name format (e.g., 'okay-rhasspy-{n:02d}.wav')",
+    )
     parser.add_argument(
         "--probability-threshold",
         type=float,
@@ -120,10 +129,27 @@ def main():
         current_energy_threshold=args.current_threshold,
         max_energy=args.max_energy,
         max_current_ratio_threshold=args.max_current_ratio_threshold,
+        min_seconds=0.5,
+        before_seconds=1,
     )
 
+    if args.record:
+        # Do recording instead of recognizing
+        return record_templates(args.record, recorder, args)
+
     # Load audio templates
-    templates = [Raven.wav_to_template(p, name=p) for p in args.templates]
+    template_paths: typing.List[Path] = []
+    for template_path_str in args.templates:
+        template_path = Path(template_path_str)
+        if template_path.is_dir():
+            # Add all WAV files from directory
+            _LOGGER.debug("Adding WAV files from directory %s", template_path)
+            template_paths.extend(template_path.glob("*.wav"))
+        elif template_path.is_file():
+            # Add file directly
+            template_paths.append(template_path)
+
+    templates = [Raven.wav_to_template(p, name=str(p)) for p in template_paths]
     if args.average_templates:
         _LOGGER.debug("Averaging %s templates", len(templates))
         templates = [Template.average_templates(templates)]
@@ -203,6 +229,54 @@ def main():
 
     except KeyboardInterrupt:
         pass
+
+
+# -----------------------------------------------------------------------------
+
+
+def record_templates(
+    name_format: str, recorder: WebRtcVadRecorder, args: argparse.Namespace
+):
+    """Record audio templates."""
+    print("Reading 16-bit 16Khz mono audio from stdin...", file=sys.stderr)
+
+    num_templates = 0
+    template_dir = Path(args.templates[0])
+
+    try:
+        print(
+            f"Recording template {num_templates}. Please speak your wake word. Press CTRL+C to exit."
+        )
+        recorder.start()
+
+        while True:
+            # Read raw audio chunk
+            chunk = sys.stdin.buffer.read(recorder.chunk_size)
+            if not chunk:
+                # Empty chunk
+                break
+
+            result = recorder.process_chunk(chunk)
+            if result:
+                audio_bytes = recorder.stop()
+                audio_bytes = trim_silence(audio_bytes)
+
+                template_path = template_dir / name_format.format(n=num_templates)
+                template_path.parent.mkdir(parents=True, exist_ok=True)
+
+                wav_bytes = buffer_to_wav(audio_bytes)
+                template_path.write_bytes(wav_bytes)
+                _LOGGER.debug(
+                    "Wrote %s byte(s) of WAV audio to %s", len(wav_bytes), template_path
+                )
+
+                num_templates += 1
+                print(
+                    f"Recording template {num_templates}. Please speak your wake word. Press CTRL+C to exit."
+                )
+                recorder.start()
+    except KeyboardInterrupt:
+        print("Done")
 
 
 # -----------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 import logging
 import math
 import typing
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 
@@ -103,6 +104,7 @@ class Raven:
         sample_rate: int = 16000,
         chunk_size: int = 960,
         shift_sec: float = 0.05,
+        before_chunks: int = 0,
         refractory_sec: float = 2.0,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
         debug: bool = False,
@@ -115,6 +117,10 @@ class Raven:
         self.chunk_size = chunk_size
         self.shift_sec = shift_sec
         self.sample_rate = sample_rate
+
+        self.before_buffer: typing.Optional[typing.Deque[bytes]] = None
+        if before_chunks > 0:
+            self.before_buffer = deque(maxlen=before_chunks)
 
         # Assume 16-bit samples
         self.sample_width = 2
@@ -161,7 +167,7 @@ class Raven:
         # State machine
         self.audio_buffer = bytes()
         self.state = RavenState.IN_SILENCE
-        self.num_silence_chunks = self.seconds_to_chunks(self.frame_duration_sec / 2)
+        self.num_silence_chunks = self.seconds_to_chunks(self.frame_duration_sec)
         self.silence_chunks_left = 0
         self.num_refractory_chunks = self.seconds_to_chunks(refractory_sec)
         self.refractory_chunks_left = 0
@@ -198,6 +204,14 @@ class Raven:
             self.state = RavenState.IN_SILENCE
             self.audio_buffer = bytes()
 
+            if self.before_buffer is not None:
+                self.before_buffer.clear()
+
+        # Keep chunks before detection
+        if self.before_buffer is not None:
+            self.before_buffer.append(chunk)
+
+        # Test chunk for silence/speech
         is_silence = self.recorder.is_silence(chunk)
 
         if self.state == RavenState.IN_SILENCE:
@@ -205,6 +219,14 @@ class Raven:
             if not is_silence:
                 # Start recording and checking audio
                 self.audio_buffer = bytes()
+
+                # Include some chunks before speech
+                if self.before_buffer is not None:
+                    for before_chunk in self.before_buffer:
+                        self.audio_buffer += before_chunk
+
+                    self.before_buffer.clear()
+
                 self.state = RavenState.IN_SPEECH
                 self.silence_chunks_left = self.num_silence_chunks
         else:
@@ -216,6 +238,9 @@ class Raven:
                 if self.silence_chunks_left <= 0:
                     # Back to sleep
                     self.state = RavenState.IN_SILENCE
+            else:
+                # Reset silence chunks
+                self.silence_chunks_left = self.num_silence_chunks
 
         if self.state == RavenState.IN_SPEECH:
             # Include audio for processing
