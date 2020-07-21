@@ -15,10 +15,10 @@ class DynamicTimeWarping:
     Uses cosine distance.
     """
 
-    def __init__(self,):
+    def __init__(self, distance_func=None):
         self.cost_matrix: typing.Optional[np.ndarray] = None
         self.distance: typing.Optional[float] = None
-        self.distance_func = scipy.spatial.distance.cosine
+        self.distance_func = distance_func or scipy.spatial.distance.cosine
 
     def compute_cost(
         self, x: np.ndarray, y: np.ndarray, window: typing.Optional[int] = None
@@ -96,6 +96,23 @@ class DynamicTimeWarping:
                     cost_matrix[row][col - 1],  # deletion
                     cost_matrix[row - 1][col - 1],  # match
                 )
+
+        # for i in range(1, m):
+        #     for j in range(1, n):
+        #         cost = self.distance_func(x[i], y[j])
+        #         cost_matrix[i][j] = cost + min(
+        #             cost_matrix[i - 1][j],  # insertion
+        #             cost_matrix[i][j - 1],  # deletion
+        #             cost_matrix[i - 1][j - 1],  # match
+        #         )
+
+        #         test = min(
+        #             cost_matrix[i - 1][j],  # insertion
+        #             cost_matrix[i][j - 1],  # deletion
+        #             cost_matrix[i - 1][j - 1],  # match
+        #         )
+
+        #         print(cost, test)
 
         self.cost_matrix = cost_matrix
         distance = self.cost_matrix[m - 1][n - 1]

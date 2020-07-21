@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: reformat check dist install
+.PHONY: reformat check dist install test
 
 all:
 

@@ -4,6 +4,8 @@ import wave
 
 from rhasspysilence import WebRtcVadRecorder
 
+# -----------------------------------------------------------------------------
+
 
 def buffer_to_wav(buffer: bytes) -> bytes:
     """Wraps a buffer of raw audio data (16-bit, 16Khz mono) in a WAV"""
@@ -16,6 +18,9 @@ def buffer_to_wav(buffer: bytes) -> bytes:
             wav_file.writeframes(buffer)
 
         return wav_buffer.getvalue()
+
+
+# -----------------------------------------------------------------------------
 
 
 def trim_silence(
@@ -50,14 +55,18 @@ def trim_silence(
     for i, (energy, chunk) in enumerate(energies):
         ratio = max_energy / energy
         if ratio < ratio_threshold:
+            end_index = None
             if start_index is None:
                 start_index = i
-        else:
+        elif end_index is None:
             end_index = i
 
     assert (start_index is not None) and (
         end_index is not None
     ), "Failed to detect silence start or stop"
+
+    start_index = max(0, start_index - 1)
+    end_index = min(len(energies) - 1, end_index + 1)
 
     keep_bytes = bytes()
     for _, chunk in energies[start_index : end_index + 1]:

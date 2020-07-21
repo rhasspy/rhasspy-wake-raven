@@ -5,6 +5,7 @@ Wakeword detector based on the [Snips Personal Wake Word Detector](https://mediu
 ## Dependencies
 
 * Python 3.7
+* `dtw-python` for [Dynamic Time Warping](https://dynamictimewarping.github.io/) calculation
 * `python-speech-features` for [MFCC](https://python-speech-features.readthedocs.io/en/latest/) computation
 * `rhasspy-silence` for [silence detection](https://github.com/rhasspy/rhasspy-silence)
 

@@ -9,6 +9,7 @@ from enum import Enum
 import numpy as np
 import python_speech_features
 import scipy.io.wavfile
+from dtw import dtw as compute_dtw
 from rhasspysilence import WebRtcVadRecorder
 
 from .dtw import DynamicTimeWarping
@@ -56,12 +57,12 @@ class Template:
             [[base_mfcc[row][col]] for col in range(cols)] for row in range(rows)
         ]
 
-        dtw = DynamicTimeWarping()
+        avg_dtw = DynamicTimeWarping()
 
         # Collect features
         for template in templates[1:]:
-            dtw.compute_cost(template.mfcc, base_mfcc)
-            path = dtw.compute_path()
+            avg_dtw.compute_cost(template.mfcc, base_mfcc)
+            path = avg_dtw.compute_path()
             assert path is not None, "Failed to get DTW path"
             for row, col in path:
                 for i, feature in enumerate(template.mfcc[row]):
@@ -99,7 +100,7 @@ class Raven:
         templates: typing.List[Template],
         probability_threshold: typing.Tuple[float, float] = (0.45, 0.55),
         distance_threshold: float = 0.22,
-        dtw: typing.Optional[DynamicTimeWarping] = None,
+        frame_dtw: typing.Optional[DynamicTimeWarping] = None,
         dtw_window_size: int = 5,
         sample_rate: int = 16000,
         chunk_size: int = 960,
@@ -130,7 +131,7 @@ class Raven:
         self.recorder = recorder or WebRtcVadRecorder()
 
         # Dynamic time warping calculation
-        self.dtw = dtw or DynamicTimeWarping()
+        self.dtw = frame_dtw or DynamicTimeWarping()
         self.dtw_window_size = dtw_window_size
 
         # Keep previously-computed distances and probabilities for debugging
@@ -279,9 +280,20 @@ class Raven:
 
         for i, template in enumerate(self.templates):
             # Compute optimal distance with a window
-            distance = self.dtw.compute_cost(
-                template.mfcc, frame_mfcc, self.dtw_window_size
+            # distance = self.dtw.compute_cost(
+            #     template.mfcc, frame_mfcc, self.dtw_window_size
+            # )
+
+            alignment = compute_dtw(
+                frame_mfcc,
+                template.mfcc,
+                distance_only=True,
+                dist_method="cosine",
+                window_type="slantedband",
+                window_args={"window_size": self.dtw_window_size},
             )
+
+            distance = alignment.distance
 
             # Normalize by sum of temporal dimensions
             normalized_distance = distance / (len(frame_mfcc) + len(template.mfcc))
