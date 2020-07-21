@@ -17,6 +17,7 @@ test/
 Outputs a JSON report with detection info and statistics.
 """
 import argparse
+import concurrent.futures
 import io
 import json
 import logging
@@ -28,8 +29,8 @@ from pathlib import Path
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
 
-# One second of silence assuming 16-bit 16Khz mono
-_SILENCE = bytes(1 * 16000 * 2)
+# Two seconds of silence assuming 16-bit 16Khz mono
+_SILENCE = bytes(2 * 16000 * 2)
 
 # -----------------------------------------------------------------------------
 
@@ -43,6 +44,12 @@ def main():
         help="Path to directory with wake-word/not-wake-word",
     )
     parser.add_argument(
+        "--test-workers",
+        type=int,
+        default=10,
+        help="Number of simultaneous raven processes during test (default: 10)",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args, raven_args = parser.parse_known_args()
@@ -54,7 +61,7 @@ def main():
         logging.basicConfig(level=logging.INFO)
 
     # Raven will exit after 1 detection
-    raven_args.extend(["--exit-count", "1"])
+    raven_args.extend(["--exit-count", "1", "--read-entire-input"])
 
     args.test_directory = Path(args.test_directory)
     wake_word_dir = args.test_directory / "wake-word"
@@ -65,8 +72,13 @@ def main():
     ), f"Expected either wake-word or not-wake-word directory in {args.test_directory}"
 
     results = {
-        "positive": [{"wav_path": p} for p in list(wake_word_dir.rglob("*.wav"))],
-        "negative": [{"wav_path": p} for p in list(not_wake_word_dir.rglob("*.wav"))],
+        "positive": [
+            {"wav_path": str(p.absolute())} for p in list(wake_word_dir.rglob("*.wav"))
+        ],
+        "negative": [
+            {"wav_path": str(p.absolute())}
+            for p in list(not_wake_word_dir.rglob("*.wav"))
+        ],
     }
 
     true_positives = 0
@@ -74,27 +86,46 @@ def main():
     true_negatives = 0
     false_negatives = 0
 
-    # Test positive examples
-    for pos_example in results["positive"]:
-        detection = raven(pos_example["wav_path"], raven_args)
-        if detection:
-            true_positives += 1
-        else:
-            false_negatives += 1
+    # Test positive and negative examples in parallel
+    path_to_example: typing.Dict[str, typing.Dict[str, typing.Any]] = {}
 
-        pos_example["wav_path"] = str(pos_example["wav_path"])
-        pos_example["detection"] = detection
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.test_workers
+    ) as executor:
+        # future -> (is_positive, example)
+        future_to_example = {}
 
-    # Test negative examples
-    for neg_example in results["negative"]:
-        detection = raven(neg_example["wav_path"], raven_args)
-        if detection:
-            false_positives += 1
-        else:
-            true_negatives += 1
+        for pos_example in results["positive"]:
+            wav_path = pos_example["wav_path"]
+            path_to_example[wav_path] = pos_example
+            future = executor.submit(raven, wav_path, raven_args)
 
-        neg_example["wav_path"] = str(neg_example["wav_path"])
-        neg_example["detection"] = detection
+            future_to_example[future] = (True, wav_path)
+
+        for neg_example in results["negative"]:
+            wav_path = neg_example["wav_path"]
+            path_to_example[wav_path] = neg_example
+            future = executor.submit(raven, wav_path, raven_args)
+
+            future_to_example[future] = (False, wav_path)
+
+        for future in concurrent.futures.as_completed(future_to_example):
+            is_positive, wav_path = future_to_example[future]
+            example = path_to_example[wav_path]
+            detection = future.result()
+
+            if detection:
+                if is_positive:
+                    true_positives += 1
+                else:
+                    false_positives += 1
+            else:
+                if is_positive:
+                    false_negatives += 1
+                else:
+                    true_negatives += 1
+
+            example["detection"] = detection
 
     try:
         precision = true_positives / (true_positives + false_positives)
@@ -127,7 +158,7 @@ def main():
 # -----------------------------------------------------------------------------
 
 
-def raven(wav_path: Path, raven_args: typing.List[str]) -> typing.Dict[str, typing.Any]:
+def raven(wav_path: str, raven_args: typing.List[str]) -> typing.Dict[str, typing.Any]:
     """Runs Rhasspy raven on a single WAV file."""
     raven_command = ["rhasspy-wake-raven"] + raven_args
     _LOGGER.debug(raven_command)
@@ -135,17 +166,18 @@ def raven(wav_path: Path, raven_args: typing.List[str]) -> typing.Dict[str, typi
         raven_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE
     )
 
-    wav_bytes = wav_path.read_bytes()
+    with open(wav_path, "rb") as wav_file:
+        wav_bytes = wav_file.read()
+
     wav_data = _SILENCE + wav_to_buffer(wav_bytes) + _SILENCE
 
-    try:
-        stdout, stderr = raven_proc.communicate(input=wav_data, timeout=3)
-        raven_proc.wait()
-        assert raven_proc.returncode == 0, stderr
+    stdout, stderr = raven_proc.communicate(input=wav_data)
+    raven_proc.terminate()
+    raven_proc.wait()
+    assert raven_proc.returncode == 0, stderr
 
+    if stdout:
         return json.loads(stdout)
-    except Exception:
-        _LOGGER.exception("raven")
 
     return {}
 

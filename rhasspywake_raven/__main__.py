@@ -99,6 +99,11 @@ def main():
         help="Exit after some number of detections (default: never)",
     )
     parser.add_argument(
+        "--read-entire-input",
+        action="store_true",
+        help="Read entire audio input at start and exit after processing",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -136,19 +141,24 @@ def main():
 
     print("Reading 16-bit 16Khz raw audio from stdin...", file=sys.stderr)
 
+    if args.read_entire_input:
+        audio_buffer = FakeStdin(sys.stdin.buffer.read())
+    else:
+        audio_buffer = sys.stdin.buffer
+
     try:
         detect_tick = 0
         start_time = time.time()
         while True:
             # Read raw audio chunk
-            chunk = sys.stdin.buffer.read(raven.chunk_size)
+            chunk = audio_buffer.read(raven.chunk_size)
             if not chunk:
                 # Empty chunk
                 break
 
             # Ensure chunk is the right size
             while len(chunk) < raven.chunk_size:
-                chunk += sys.stdin.buffer.read(raven.chunk_size - len(chunk))
+                chunk += audio_buffer.read(raven.chunk_size - len(chunk))
                 if not chunk:
                     # Empty chunk
                     break
@@ -193,6 +203,26 @@ def main():
 
     except KeyboardInterrupt:
         pass
+
+
+# -----------------------------------------------------------------------------
+
+
+class FakeStdin:
+    """Wrapper for fixed audio buffer that returns empty chunks when exhausted."""
+
+    def __init__(self, audio_bytes: bytes):
+        self.audio_bytes = audio_bytes
+
+    def read(self, n: int) -> bytes:
+        """Read n bytes from buffer or return empty chunk."""
+        if len(self.audio_bytes) >= n:
+            chunk = self.audio_bytes[:n]
+            self.audio_bytes = self.audio_bytes[n:]
+            return chunk
+
+        # Empty chunk
+        return bytes()
 
 
 # -----------------------------------------------------------------------------
