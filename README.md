@@ -5,7 +5,6 @@ Wakeword detector based on the [Snips Personal Wake Word Detector](https://mediu
 ## Dependencies
 
 * Python 3.7
-* `dtw-python` for [Dynamic Time Warping](https://dynamictimewarping.github.io/) calculation
 * `python-speech-features` for [MFCC](https://python-speech-features.readthedocs.io/en/latest/) computation
 * `rhasspy-silence` for [silence detection](https://github.com/rhasspy/rhasspy-silence)
 
@@ -19,16 +18,31 @@ $ make
 $ make install
 ```
 
-## Running
+## Recording Templates
 
-Record at least 3 WAV files with your wake word. Trim silence off the front and back manually, and export them as 16-bit 16Khz mono WAV files. Then, run:
+Record at least 3 WAV templates with your wake word:
 
 ```sh
 $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
-    bin/rhasspy-wake-raven <WAV1> <WAV2> <WAV3> ...
+    bin/rhasspy-wake-raven --record 'my-wake-word-{n:02d}.wav' my-wake-word/
 ```
 
-You can add `--debug` to the command line to get more information about the underlying computation on each audio frame.
+Follow the prompts and speak your wake word. When you've recorded at least 3 examples, hit CTRL+C to exit. Your WAV templates will have silence automatically trimmed, and will be saved in the directory `my-wake-word/`.
+
+If you want to manually record WAV templates, trim silence off the front and back and make sure to export them as 16-bit 16Khz mono WAV files.
+
+## Running
+
+After recording your WAV templates in a directory, run:
+
+```sh
+$ arecord -r 16000 -f S16_LE -c 1 -t raw | \
+    bin/rhasspy-wake-raven <WAV_DIR> ...
+```
+
+where `<WAV_DIR>` contains the WAV templates. You may also specify individual WAV files.
+
+Add `--debug` to the command line to get more information about the underlying computation on each audio frame.
 
 ### Example
 
@@ -36,14 +50,16 @@ Using the example files for "okay rhasspy":
 
 ```sh
 $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
-    bin/rhasspy-wake-raven --minimum-matches 2 etc/test/okay-rhasspy-*.wav
+    bin/rhasspy-wake-raven etc/okay-rhasspy/
 ```
 
-This requires at least 2 of the 3 WAV templates to match before output is printed:
+This requires at least 1 of the 3 WAV templates to match before output like this is printed:
 
 ```json
-{"keyword": "etc/test/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": [0.45, 0.55], "distance_threshold": 0.22, "tick": 1, "matches": 2}}
+{"keyword": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": [0.45, 0.55], "distance_threshold": 0.22, "tick": 1, "matches": 2}}
 ```
+
+Use `--minimum-matches` to change how many templates must match for a detection to occur. Adjust the sensitivity with `--probability-threshold <LOWER> <UPPER>` which sets the lower/upper bounds of the detection probability (default is `0.45 0.55`).
 
 ## Output
 
@@ -59,6 +75,33 @@ Raven outputs a line of JSON when the wake word is detected. Fields are:
     * `distance_threshold` - distance threshold used for comparison
     * `matches` - number of WAV templates that matched
     * `tick` - monotonic counter incremented for each detection
+
+## Testing
+
+You can test how well Raven works on a set of sample WAV files:
+
+```sh
+$ PATH=$PWD/bin test-raven.py --test-directory /path/to/samples/ /path/to/templates/
+```
+
+This will run up to 10 parallel instances of Raven (change with `--test-workers`) and output a JSON report with detection information and summary statistics like:
+
+```json
+{
+  "positive": [...],
+  "negative": [...],
+  "summary": {
+    "true_positives": 14,
+    "false_positives": 0,
+    "true_negatives": 40,
+    "false_negatives": 7,
+    "precision": 1.0,
+    "recall": 0.6666666666666666,
+    "f1_score": 0.8
+}
+```
+
+Any additional command-line arguments are passed to Raven (e.g., `--minimum-matches`).
 
 ## Command-Line Interface
 

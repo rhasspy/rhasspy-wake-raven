@@ -176,8 +176,13 @@ def raven(wav_path: str, raven_args: typing.List[str]) -> typing.Dict[str, typin
     raven_proc.wait()
     assert raven_proc.returncode == 0, stderr
 
+    stdout = stdout.strip()
+
     if stdout:
-        return json.loads(stdout)
+        try:
+            return json.loads(stdout)
+        except Exception:
+            _LOGGER.exception(stdout)
 
     return {}
 

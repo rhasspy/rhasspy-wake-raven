@@ -9,7 +9,6 @@ from enum import Enum
 import numpy as np
 import python_speech_features
 import scipy.io.wavfile
-from dtw import dtw as compute_dtw
 from rhasspysilence import WebRtcVadRecorder
 
 from .dtw import DynamicTimeWarping
@@ -102,6 +101,7 @@ class Raven:
         distance_threshold: float = 0.22,
         frame_dtw: typing.Optional[DynamicTimeWarping] = None,
         dtw_window_size: int = 5,
+        dtw_step_pattern: float = 2,
         sample_rate: int = 16000,
         chunk_size: int = 960,
         shift_sec: float = 0.05,
@@ -133,6 +133,7 @@ class Raven:
         # Dynamic time warping calculation
         self.dtw = frame_dtw or DynamicTimeWarping()
         self.dtw_window_size = dtw_window_size
+        self.dtw_step_pattern = dtw_step_pattern
 
         # Keep previously-computed distances and probabilities for debugging
         self.last_distances: typing.List[typing.Optional[float]] = [
@@ -280,32 +281,18 @@ class Raven:
 
         for i, template in enumerate(self.templates):
             # Compute optimal distance with a window
-            # distance = self.dtw.compute_cost(
-            #     template.mfcc, frame_mfcc, self.dtw_window_size
-            # )
-
-            alignment = compute_dtw(
-                frame_mfcc,
+            distance = self.dtw.compute_cost(
                 template.mfcc,
-                distance_only=True,
-                dist_method="cosine",
-                window_type="slantedband",
-                window_args={"window_size": self.dtw_window_size},
+                frame_mfcc,
+                self.dtw_window_size,
+                step_pattern=self.dtw_step_pattern,
             )
-
-            distance = alignment.distance
 
             # Normalize by sum of temporal dimensions
             normalized_distance = distance / (len(frame_mfcc) + len(template.mfcc))
 
             # Compute detection probability
-            probability = 1 / (
-                1
-                + math.exp(
-                    (normalized_distance - self.distance_threshold)
-                    / self.distance_threshold
-                )
-            )
+            probability = self.distance_to_probability(normalized_distance)
 
             if self.debug:
                 _LOGGER.debug(
@@ -333,6 +320,16 @@ class Raven:
     def seconds_to_chunks(self, seconds: float) -> int:
         """Compute number of chunks needed to cover some seconds of audio."""
         return int(math.ceil(seconds / (self.chunk_size / self.sample_rate)))
+
+    def distance_to_probability(self, normalized_distance: float) -> float:
+        """Compute detection probability using distance and threshold."""
+        return 1 / (
+            1
+            + math.exp(
+                (normalized_distance - self.distance_threshold)
+                / self.distance_threshold
+            )
+        )
 
     @staticmethod
     def wav_to_template(wav_file, name: str = "") -> Template:

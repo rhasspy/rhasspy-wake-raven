@@ -1,10 +1,17 @@
 """Test cases for dynamic time warping."""
 import math
 import unittest
+from pathlib import Path
 
+import scipy.io.wavfile
 import numpy as np
 import scipy.spatial.distance
+import python_speech_features
 from rhasspywake_raven.dtw import DynamicTimeWarping
+
+_DIR = Path(__file__).parent
+
+# -----------------------------------------------------------------------------
 
 
 class DTWTests(unittest.TestCase):
@@ -52,6 +59,50 @@ class DTWTests(unittest.TestCase):
                 ),
             ),
             self.dtw.cost_matrix,
+        )
+
+    def test_mfcc(self):
+        """Test cost calculation with actual WAV files."""
+
+        # Use cosine distance
+        self.dtw = DynamicTimeWarping()
+
+        rate_1, wav_1 = scipy.io.wavfile.read("etc/okay-rhasspy/okay-rhasspy-00.wav")
+        rate_2, wav_2 = scipy.io.wavfile.read("etc/okay-rhasspy/okay-rhasspy-01.wav")
+        rate_3, wav_3 = scipy.io.wavfile.read("etc/hey-mycroft/hey-mycroft-00.wav")
+
+        mfcc_1 = python_speech_features.mfcc(wav_1, rate_1)
+        mfcc_2 = python_speech_features.mfcc(wav_2, rate_2)
+        mfcc_3 = python_speech_features.mfcc(wav_3, rate_3)
+
+        # Verify both "okay rhasspy" templates match
+        distance = self.dtw.compute_cost(mfcc_1, mfcc_2, window=5, step_pattern=2)
+        normalized_distance = distance / (len(mfcc_1) + len(mfcc_2))
+
+        # Compute detection probability
+        probability = self._distance_to_probability(normalized_distance)
+
+        # p in [0.45, 0.55]
+        self.assertGreaterEqual(probability, 0.45)
+        self.assertLessEqual(probability, 0.55)
+
+        # Verify "okay rhasspy" and "hey mycroft" templates don't match
+        distance = self.dtw.compute_cost(mfcc_1, mfcc_3, window=5, step_pattern=2)
+        normalized_distance = distance / (len(mfcc_1) + len(mfcc_3))
+
+        # Compute detection probability
+        probability = self._distance_to_probability(normalized_distance)
+
+        # p NOT in [0.45, 0.55]
+        self.assertTrue((probability < 0.45) or (probability > 0.55), probability)
+
+    def _distance_to_probability(
+        self, normalized_distance: float, distance_threshold: float = 0.22
+    ) -> float:
+        """Compute detection probability using distance and threshold."""
+        return 1 / (
+            1
+            + math.exp((normalized_distance - distance_threshold) / distance_threshold)
         )
 
 
