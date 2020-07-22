@@ -61,9 +61,11 @@ def trim_silence(
         elif end_index is None:
             end_index = i
 
-    assert (start_index is not None) and (
-        end_index is not None
-    ), "Failed to detect silence start or stop"
+    if start_index is None:
+        start_index = 0
+
+    if end_index is None:
+        end_index = len(energies) - 1
 
     start_index = max(0, start_index - 1)
     end_index = min(len(energies) - 1, end_index + 1)
