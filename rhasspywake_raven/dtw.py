@@ -140,7 +140,7 @@ class DynamicTimeWarping:
 
                     # symmetric step pattern
                     cost_matrix[row][col] = min(
-                        cost + (step_pattern * cost_matrix[row - 1][col - 1]),
+                        (step_pattern * cost) + cost_matrix[row - 1][col - 1],
                         cost + cost_matrix[row - 1][col],
                         cost + cost_matrix[row][col - 1],
                     )
