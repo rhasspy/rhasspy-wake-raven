@@ -92,6 +92,48 @@ class Raven:
 
     templates: List[Template]
         Wake word templates created from pre-trimmed WAV files
+
+    probability_threshold: Tuple[float, float] = (0.45, 0.55)
+        Probability range in which detection occurs
+
+    distance_threshold: float = 0.22
+        Cosine distance reference for probability calculation
+
+    frame_dtw: Optional[DynamicTimeWarping] = None
+        DTW calculator (None for default)
+
+    dtw_window_size: int = 5
+        Size of Sakoe-Chiba window in DTW calculation
+
+    dtw_step_pattern: float = 2
+        Replacement cost multipler in DTW calculation
+
+    sample_rate: int = 16000
+        Sample rate of audio chunks in Hertz.
+
+    chunk_size: int = 960
+        Size of audio chunks in bytes.
+        Must be 10, 20, or 30 ms for VAD calculation.
+        A sample width of 2 bytes (16 bits) is assumed.
+
+    shift_sec: float = 0.05
+        Seconds to shift overlapping window by
+
+    before_chunks: int = 0
+        Chunks of audio before speech to keep in window
+
+    refractory_sec: float = 2
+        Seconds after detection that new detection cannot occur
+
+    recorder: Optional[WebRtcVadRecorder] = None
+        Silence detector (None for default settings).
+        MFCC/DTW calculations are only done when a non-silent chunk of audio is
+        detected. Calculations cease if at least N silence chunks are detected
+        afterwards where N is the number of chunks needed to span the average
+        template duration. No calculations are done during refractory period.
+
+    debug: bool = False
+        If True, template probability calculations are logged
     """
 
     def __init__(
