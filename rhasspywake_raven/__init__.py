@@ -128,6 +128,9 @@ class Raven:
         Chunks of audio before speech to keep in window
 
     refractory_sec: float = 2
+        Skip additional template calculations if probability is below this threshold
+
+    refractory_sec: float = 2
         Seconds after detection that new detection cannot occur
 
     recorder: Optional[WebRtcVadRecorder] = None
@@ -155,6 +158,7 @@ class Raven:
         shift_sec: float = 0.01,
         before_chunks: int = 0,
         refractory_sec: float = 2.0,
+        skip_probability_threshold: float = 0.0,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
         debug: bool = False,
     ):
@@ -164,6 +168,7 @@ class Raven:
         self.probability_threshold = probability_threshold
         self.minimum_matches = minimum_matches
         self.distance_threshold = distance_threshold
+        self.skip_probability_threshold = skip_probability_threshold
 
         self.chunk_size = chunk_size
         self.shift_sec = shift_sec
@@ -371,6 +376,9 @@ class Raven:
                 ):
                     # Return immediately once minimum matches are satisfied
                     return matching_indexes
+            elif probability < self.skip_probability_threshold:
+                # Skip other templates if below threshold
+                return matching_indexes
 
         return matching_indexes
 

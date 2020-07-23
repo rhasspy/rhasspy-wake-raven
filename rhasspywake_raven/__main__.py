@@ -119,6 +119,12 @@ def main():
         help="Maximum number of audio chunks waiting for processing before being dropped",
     )
     parser.add_argument(
+        "--skip-probability-threshold",
+        type=float,
+        default=0,
+        help="Skip additional template calculations if probability is below this threshold",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -169,6 +175,7 @@ def main():
         distance_threshold=args.distance_threshold,
         refractory_sec=args.refractory_seconds,
         shift_sec=args.window_shift_seconds,
+        skip_probability_threshold=args.skip_probability_threshold,
         debug=args.debug,
     )
 
@@ -206,6 +213,11 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # Exhaust queue
+        while not chunk_queue.empty():
+            chunk_queue.get()
+
+        # Signal thread to quit
         chunk_queue.put(None)
         detect_thread.join()
 
