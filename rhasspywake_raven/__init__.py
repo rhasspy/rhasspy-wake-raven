@@ -1,6 +1,7 @@
 """Implementation of Snips Personal Wake Word Detector."""
 import logging
 import math
+import time
 import typing
 from collections import deque
 from dataclasses import dataclass
@@ -93,8 +94,12 @@ class Raven:
     templates: List[Template]
         Wake word templates created from pre-trimmed WAV files
 
-    probability_threshold: Tuple[float, float] = (0.45, 0.55)
-        Probability range in which detection occurs
+    probability_threshold: float = 0.5
+        Probability above which which detection occurs
+
+    minimum_matches: int = 0
+        Minimum number of templates that must match for detection.
+        Use 0 for all templates.
 
     distance_threshold: float = 0.22
         Cosine distance reference for probability calculation
@@ -116,7 +121,7 @@ class Raven:
         Must be 10, 20, or 30 ms for VAD calculation.
         A sample width of 2 bytes (16 bits) is assumed.
 
-    shift_sec: float = 0.05
+    shift_sec: float = 0.01
         Seconds to shift overlapping window by
 
     before_chunks: int = 0
@@ -139,14 +144,15 @@ class Raven:
     def __init__(
         self,
         templates: typing.List[Template],
-        probability_threshold: typing.Tuple[float, float] = (0.45, 0.55),
+        probability_threshold: float = 0.5,
+        minimum_matches: int = 0,
         distance_threshold: float = 0.22,
         frame_dtw: typing.Optional[DynamicTimeWarping] = None,
         dtw_window_size: int = 5,
         dtw_step_pattern: float = 2,
         sample_rate: int = 16000,
         chunk_size: int = 960,
-        shift_sec: float = 0.05,
+        shift_sec: float = 0.01,
         before_chunks: int = 0,
         refractory_sec: float = 2.0,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
@@ -156,7 +162,9 @@ class Raven:
         assert self.templates, "No templates"
 
         self.probability_threshold = probability_threshold
+        self.minimum_matches = minimum_matches
         self.distance_threshold = distance_threshold
+
         self.chunk_size = chunk_size
         self.shift_sec = shift_sec
         self.sample_rate = sample_rate
@@ -215,6 +223,7 @@ class Raven:
         self.silence_chunks_left = 0
         self.num_refractory_chunks = self.seconds_to_chunks(refractory_sec)
         self.refractory_chunks_left = 0
+        self.match_seconds: typing.Optional[float] = None
 
         self.debug = debug
 
@@ -287,6 +296,8 @@ class Raven:
                 self.silence_chunks_left = self.num_silence_chunks
 
         if self.state == RavenState.IN_SPEECH:
+            match_start_time = time.perf_counter()
+
             # Include audio for processing
             self.audio_buffer += chunk
 
@@ -305,6 +316,8 @@ class Raven:
                     # Reset state to avoid multiple detections.
                     self.state = RavenState.IN_REFRACTORY
                     self.refractory_chunks_left = self.num_refractory_chunks
+                    self.match_seconds = time.perf_counter() - match_start_time
+
                     return matching_indexes
 
         # No detections
@@ -349,13 +362,15 @@ class Raven:
             self.last_distances[i] = normalized_distance
             self.last_probabilities[i] = probability
 
-            if (
-                self.probability_threshold[0]
-                < probability
-                < self.probability_threshold[1]
-            ):
+            if probability >= self.probability_threshold:
                 # Detection occured
                 matching_indexes.append(i)
+
+                if (self.minimum_matches > 0) and (
+                    len(matching_indexes) >= self.minimum_matches
+                ):
+                    # Return immediately once minimum matches are satisfied
+                    return matching_indexes
 
         return matching_indexes
 

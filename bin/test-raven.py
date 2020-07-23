@@ -142,6 +142,18 @@ def main():
     except ZeroDivisionError:
         f1_score = 0.0
 
+    average_match_seconds = 0
+    pos_match_seconds = []
+    for pos_example in results["positive"]:
+        match_seconds = pos_example.get("detection", {}).get("match_seconds")
+        if match_seconds is not None:
+            pos_match_seconds.append(match_seconds)
+
+    if len(pos_match_seconds) > 0:
+        average_match_seconds = sum(average_match_seconds) / len(average_match_seconds)
+
+    # -------------------------------------------------------------------------
+
     results["summary"] = {
         "true_positives": true_positives,
         "false_positives": false_positives,
@@ -150,6 +162,7 @@ def main():
         "precision": precision,
         "recall": recall,
         "f1_score": f1_score,
+        "average_match_seconds": average_match_seconds,
     }
 
     json.dump(results, sys.stdout, indent=4)

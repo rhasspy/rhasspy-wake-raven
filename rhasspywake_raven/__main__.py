@@ -30,9 +30,8 @@ def main():
     parser.add_argument(
         "--probability-threshold",
         type=float,
-        nargs=2,
-        default=[0.45, 0.55],
-        help="Probability range where detection occurs (default: (0.45, 0.55))",
+        default=0.5,
+        help="Probability above which detection occurs (default: 0.5)",
     )
     parser.add_argument(
         "--distance-threshold",
@@ -60,8 +59,8 @@ def main():
     parser.add_argument(
         "--window-shift-seconds",
         type=float,
-        default=0.05,
-        help="Seconds to shift sliding time window on audio buffer (default: 0.05)",
+        default=0.01,
+        help="Seconds to shift sliding time window on audio buffer (default: 0.01)",
     )
     parser.add_argument(
         "--dtw-window-size",
@@ -158,7 +157,8 @@ def main():
     raven = Raven(
         templates=templates,
         recorder=recorder,
-        probability_threshold=tuple(args.probability_threshold),
+        probability_threshold=args.probability_threshold,
+        minimum_matches=args.minimum_matches,
         distance_threshold=args.distance_threshold,
         refractory_sec=args.refractory_seconds,
         shift_sec=args.window_shift_seconds,
@@ -214,6 +214,7 @@ def main():
                                     "distance_threshold": raven.distance_threshold,
                                     "tick": detect_tick,
                                     "matches": len(matching_indexes),
+                                    "match_seconds": raven.match_seconds,
                                 },
                             }
                         )

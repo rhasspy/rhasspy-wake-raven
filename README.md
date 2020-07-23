@@ -56,10 +56,10 @@ $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
 This requires at least 1 of the 3 WAV templates to match before output like this is printed:
 
 ```json
-{"keyword": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": [0.45, 0.55], "distance_threshold": 0.22, "tick": 1, "matches": 2}}
+{"keyword": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": 0.5, "distance_threshold": 0.22, "tick": 1, "matches": 2}}
 ```
 
-Use `--minimum-matches` to change how many templates must match for a detection to occur. Adjust the sensitivity with `--probability-threshold <LOWER> <UPPER>` which sets the lower/upper bounds of the detection probability (default is `0.45 0.55`).
+Use `--minimum-matches` to change how many templates must match for a detection to occur. Adjust the sensitivity with `--probability-threshold` which sets the lower bound of the detection probability (default is 0.5).
 
 ## Output
 
@@ -81,7 +81,7 @@ Raven outputs a line of JSON when the wake word is detected. Fields are:
 You can test how well Raven works on a set of sample WAV files:
 
 ```sh
-$ PATH=$PWD/bin test-raven.py --test-directory /path/to/samples/ /path/to/templates/
+$ PATH=$PWD/bin:$PATH test-raven.py --test-directory /path/to/samples/ /path/to/templates/
 ```
 
 This will run up to 10 parallel instances of Raven (change with `--test-workers`) and output a JSON report with detection information and summary statistics like:
