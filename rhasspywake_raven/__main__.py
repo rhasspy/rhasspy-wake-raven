@@ -4,9 +4,11 @@ import argparse
 import json
 import logging
 import sys
+import threading
 import time
 import typing
 from pathlib import Path
+from queue import Queue
 
 from rhasspysilence import WebRtcVadRecorder
 from rhasspysilence.const import SilenceMethod
@@ -112,6 +114,11 @@ def main():
         help="Read entire audio input at start and exit after processing",
     )
     parser.add_argument(
+        "--max-chunks-in-queue",
+        type=int,
+        help="Maximum number of audio chunks waiting for processing before being dropped",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -172,9 +179,14 @@ def main():
     else:
         audio_buffer = sys.stdin.buffer
 
+    chunk_queue = Queue()
+    detect_thread = threading.Thread(
+        target=detect_thread_proc, args=(chunk_queue, raven, args), daemon=True
+    )
+
+    detect_thread.start()
+
     try:
-        detect_tick = 0
-        start_time = time.time()
         while True:
             # Read raw audio chunk
             chunk = audio_buffer.read(raven.chunk_size)
@@ -189,47 +201,76 @@ def main():
                     # Empty chunk
                     break
 
-            # Get matching audio templates (if any)
-            matching_indexes = raven.process_chunk(chunk)
-            if len(matching_indexes) >= args.minimum_matches:
-                detect_time = time.time()
-                detect_tick += 1
-
-                # Print results for matching templates
-                for template_index in matching_indexes:
-                    template = raven.templates[template_index]
-                    distance = raven.last_distances[template_index]
-                    probability = raven.last_probabilities[template_index]
-
-                    print(
-                        json.dumps(
-                            {
-                                "keyword": template.name,
-                                "detect_seconds": detect_time - start_time,
-                                "detect_timestamp": detect_time,
-                                "raven": {
-                                    "probability": probability,
-                                    "distance": distance,
-                                    "probability_threshold": args.probability_threshold,
-                                    "distance_threshold": raven.distance_threshold,
-                                    "tick": detect_tick,
-                                    "matches": len(matching_indexes),
-                                    "match_seconds": raven.match_seconds,
-                                },
-                            }
-                        )
-                    )
-
-                    if not args.print_all_matches:
-                        # Only print first match
-                        break
-
-            # Check if we need to exit
-            if (args.exit_count is not None) and (detect_tick >= args.exit_count):
-                break
+            chunk_queue.put(chunk)
 
     except KeyboardInterrupt:
         pass
+    finally:
+        chunk_queue.put(None)
+        detect_thread.join()
+
+
+# -----------------------------------------------------------------------------
+
+
+def detect_thread_proc(chunk_queue, raven, args):
+    """Template matching in a separated thread."""
+    detect_tick = 0
+    start_time = time.time()
+
+    while True:
+
+        if args.max_chunks_in_queue is not None:
+            dropped_chunks = 0
+            while chunk_queue.qsize() > args.max_chunks_in_queue:
+                chunk = chunk_queue.get()
+                dropped_chunks += 1
+
+            if dropped_chunks > 0:
+                _LOGGER.debug("Dropped %s chunks of audio", dropped_chunks)
+
+        chunk = chunk_queue.get()
+        if chunk is None:
+            break
+
+        # Get matching audio templates (if any)
+        matching_indexes = raven.process_chunk(chunk)
+        if len(matching_indexes) >= args.minimum_matches:
+            detect_time = time.time()
+            detect_tick += 1
+
+            # Print results for matching templates
+            for template_index in matching_indexes:
+                template = raven.templates[template_index]
+                distance = raven.last_distances[template_index]
+                probability = raven.last_probabilities[template_index]
+
+                print(
+                    json.dumps(
+                        {
+                            "keyword": template.name,
+                            "detect_seconds": detect_time - start_time,
+                            "detect_timestamp": detect_time,
+                            "raven": {
+                                "probability": probability,
+                                "distance": distance,
+                                "probability_threshold": args.probability_threshold,
+                                "distance_threshold": raven.distance_threshold,
+                                "tick": detect_tick,
+                                "matches": len(matching_indexes),
+                                "match_seconds": raven.match_seconds,
+                            },
+                        }
+                    )
+                )
+
+                if not args.print_all_matches:
+                    # Only print first match
+                    break
+
+        # Check if we need to exit
+        if (args.exit_count is not None) and (detect_tick >= args.exit_count):
+            sys.exit(0)
 
 
 # -----------------------------------------------------------------------------

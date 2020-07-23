@@ -9,6 +9,8 @@ The underlying implementation of Raven heavily borrows from [node-personal-wakew
 * Python 3.7
 * `python-speech-features` for [MFCC](https://python-speech-features.readthedocs.io/en/latest/) computation
 * `rhasspy-silence` for [silence detection](https://github.com/rhasspy/rhasspy-silence)
+* Scientific libraries
+    * `sudo apt-get install liblapack3 libatlas-base-dev`
 
 ## Installation
 
