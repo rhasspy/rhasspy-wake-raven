@@ -61,7 +61,7 @@ class Template:
 
         # Collect features
         for template in templates[1:]:
-            avg_dtw.compute_cost(template.mfcc, base_mfcc)
+            avg_dtw.compute_cost(template.mfcc, base_mfcc, keep_matrix=True)
             path = avg_dtw.compute_path()
             assert path is not None, "Failed to get DTW path"
             for row, col in path:

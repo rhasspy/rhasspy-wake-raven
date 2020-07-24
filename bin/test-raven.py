@@ -145,12 +145,14 @@ def main():
     average_match_seconds = 0
     pos_match_seconds = []
     for pos_example in results["positive"]:
-        match_seconds = pos_example.get("detection", {}).get("match_seconds")
+        match_seconds = (
+            pos_example.get("detection", {}).get("raven", {}).get("match_seconds")
+        )
         if match_seconds is not None:
             pos_match_seconds.append(match_seconds)
 
     if len(pos_match_seconds) > 0:
-        average_match_seconds = sum(average_match_seconds) / len(average_match_seconds)
+        average_match_seconds = sum(pos_match_seconds) / len(pos_match_seconds)
 
     # -------------------------------------------------------------------------
 

@@ -149,34 +149,26 @@ class DynamicTimeWarping:
         distance_matrix = scipy.spatial.distance.cdist(x, y, metric=self.distance_func)
 
         cost_matrix = np.full(shape=(n + 1, m + 1), fill_value=math.inf, dtype=float)
-        cost_matrix[0][0] = distance_matrix[0][0]
 
-        for row in range(1, n):
-            if self.constraint_func(row, 0, window):
-                cost = distance_matrix[row, 0]
-                cost_matrix[row][0] = cost + cost_matrix[row - 1][0]
+        cost_matrix[0][0] = 0
+        for row in range(1, n + 1):
+            col_start = max(1, row - window)
+            col_end = min(m, row + window)
 
-        for col in range(1, m):
-            if self.constraint_func(0, col, window):
-                cost = distance_matrix[0, col]
-                cost_matrix[0][col] = cost + cost_matrix[0][col - 1]
+            for col in range(col_start, col_end + 1):
+                cost = distance_matrix[row - 1, col - 1]
 
-        for row in range(1, n):
-            for col in range(1, m):
-                if self.constraint_func(row, col, window):
-                    cost = distance_matrix[row, col]
-
-                    # symmetric step pattern
-                    cost_matrix[row][col] = min(
-                        (step_pattern * cost) + cost_matrix[row - 1][col - 1],
-                        cost + cost_matrix[row - 1][col],
-                        cost + cost_matrix[row][col - 1],
-                    )
+                # symmetric step pattern
+                cost_matrix[row][col] = min(
+                    (step_pattern * cost) + cost_matrix[row - 1][col - 1],
+                    cost + cost_matrix[row - 1][col],
+                    cost + cost_matrix[row][col - 1],
+                )
 
         if keep_matrix:
-            self.cost_matrix = cost_matrix[:-1, :-1]
+            self.cost_matrix = cost_matrix[1:, 1:]
 
-        distance = cost_matrix[n - 1][m - 1]
+        distance = cost_matrix[n][m]
         self.distance = distance
 
         return distance
