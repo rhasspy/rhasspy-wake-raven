@@ -74,7 +74,7 @@ def main():
         "--vad-sensitivity",
         type=int,
         choices=[1, 2, 3],
-        default=3,
+        default=1,
         help="Webrtcvad VAD sensitivity (1-3)",
     )
     parser.add_argument(
@@ -213,9 +213,10 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        # Exhaust queue
-        while not chunk_queue.empty():
-            chunk_queue.get()
+        if not args.read_entire_input:
+            # Exhaust queue
+            while not chunk_queue.empty():
+                chunk_queue.get()
 
         # Signal thread to quit
         chunk_queue.put(None)

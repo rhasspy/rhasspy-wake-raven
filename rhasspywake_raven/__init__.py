@@ -270,7 +270,12 @@ class Raven:
             self.before_buffer.append(chunk)
 
         # Test chunk for silence/speech
+        vad_start_time = time.perf_counter()
         is_silence = self.recorder.is_silence(chunk)
+
+        if self.debug:
+            vad_end_time = time.perf_counter()
+            _LOGGER.debug("VAD on chunk in %s second(s)", vad_end_time - vad_start_time)
 
         if self.state == RavenState.IN_SILENCE:
             # Only silence so far
@@ -337,10 +342,18 @@ class Raven:
         List of matching template indexes
         """
         matching_indexes: typing.List[int] = []
+
+        mfcc_start_time = time.perf_counter()
         frame_mfcc = python_speech_features.mfcc(frame, self.sample_rate)
+        if self.debug:
+            mfcc_end_time = time.perf_counter()
+            _LOGGER.debug(
+                "MFCC on frame in %s second(s)", mfcc_end_time - mfcc_start_time
+            )
 
         for i, template in enumerate(self.templates):
             # Compute optimal distance with a window
+            dtw_start_time = time.perf_counter()
             distance = self.dtw.compute_cost(
                 template.mfcc,
                 frame_mfcc,
@@ -355,12 +368,15 @@ class Raven:
             probability = self.distance_to_probability(normalized_distance)
 
             if self.debug:
+                dtw_end_time = time.perf_counter()
                 _LOGGER.debug(
-                    "Template %s: prob=%s, norm_dist=%s, dist=%s",
+                    "Template %s: prob=%s, norm_dist=%s, dist=%s, dtw_time=%s, template_time=%s",
                     i,
                     probability,
                     normalized_distance,
                     distance,
+                    dtw_end_time - dtw_start_time,
+                    template.duration_sec,
                 )
 
             # Keep calculations results for debugging

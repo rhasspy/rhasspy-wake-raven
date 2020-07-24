@@ -18,14 +18,14 @@ class DTWTests(unittest.TestCase):
     """Test cases for dynamic time warping."""
 
     def setUp(self):
-        self.dtw = DynamicTimeWarping(distance_func=scipy.spatial.distance.euclidean)
+        self.dtw = DynamicTimeWarping(distance_func="euclidean")
 
     def test_nowindow(self):
         """Test cost calculation without a window."""
-        x = [1, 2, 3]
-        y = [2, 2, 2, 3, 4]
+        x = np.array([1, 2, 3])
+        y = np.array([2, 2, 2, 3, 4])
 
-        distance = self.dtw.compute_cost(x, y)
+        distance = self.dtw.compute_cost(x, y, keep_matrix=True)
         self.assertEqual(distance, 2.0)
         self.assertTrue(
             np.array_equal(
@@ -39,10 +39,10 @@ class DTWTests(unittest.TestCase):
 
     def test_window(self):
         """Test cost calculation with a window."""
-        x = [1, 2, 3, 3, 5]
-        y = [1, 2, 2, 2, 2, 2, 2, 4]
+        x = np.array([1, 2, 3, 3, 5])
+        y = np.array([1, 2, 2, 2, 2, 2, 2, 4])
 
-        distance = self.dtw.compute_cost(x, y, window=3)
+        distance = self.dtw.compute_cost(x, y, window=3, keep_matrix=True)
         self.assertEqual(distance, 3.0)
         self.assertTrue(
             np.array_equal(
@@ -82,9 +82,8 @@ class DTWTests(unittest.TestCase):
         # Compute detection probability
         probability = self._distance_to_probability(normalized_distance)
 
-        # p in [0.45, 0.55]
-        self.assertGreaterEqual(probability, 0.45)
-        self.assertLessEqual(probability, 0.55)
+        # p >= 0.5
+        self.assertGreaterEqual(probability, 0.5)
 
         # Verify "okay rhasspy" and "hey mycroft" templates don't match
         distance = self.dtw.compute_cost(mfcc_1, mfcc_3, window=5, step_pattern=2)
@@ -93,8 +92,8 @@ class DTWTests(unittest.TestCase):
         # Compute detection probability
         probability = self._distance_to_probability(normalized_distance)
 
-        # p NOT in [0.45, 0.55]
-        self.assertTrue((probability < 0.45) or (probability > 0.55), probability)
+        # p < 0.5
+        self.assertLess(probability, 0.5)
 
     def _distance_to_probability(
         self, normalized_distance: float, distance_threshold: float = 0.22
