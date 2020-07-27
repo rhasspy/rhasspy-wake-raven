@@ -27,8 +27,8 @@ def main():
     )
     parser.add_argument(
         "--chunk-size",
-        default=2048,
-        help="Number of bytes to read at a time from standard in (default: 2048)",
+        default=1024,
+        help="Number of bytes to read at a time from standard in (default: 1024)",
     )
     parser.add_argument(
         "--record",

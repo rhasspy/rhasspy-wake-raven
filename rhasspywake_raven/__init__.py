@@ -173,18 +173,17 @@ class Raven:
             templates
         )
 
+        # Seconds to shift template window by during processing
+        self.template_shift_sec = shift_sec
+        self.shifts_per_template = int(math.ceil(template_duration_sec / shift_sec))
+
         # Bytes needed for a template
-        self.template_chunk_bytes = int(
-            math.ceil(template_duration_sec * self.bytes_per_second)
-        )
+        shift_bytes = int(math.ceil(shift_sec * self.bytes_per_second))
+        self.template_chunk_bytes = int(self.shifts_per_template * shift_bytes)
 
         # Ensure divisible by sample width
         while (self.template_chunk_bytes % self.sample_width) != 0:
             self.template_chunk_bytes += 1
-
-        # Seconds to shift template window by during processing
-        self.template_shift_sec = shift_sec
-        self.shifts_per_template = int(math.ceil(template_duration_sec / shift_sec))
 
         # Audio
         self.vad_audio_buffer = bytes()
@@ -192,7 +191,7 @@ class Raven:
         self.template_mfcc: typing.Optional[np.ndarray] = None
         self.template_chunks_left = 0
         self.num_template_chunks = int(
-            math.ceil(self.template_chunk_bytes / self.vad_chunk_bytes)
+            math.ceil((self.template_chunk_bytes / self.vad_chunk_bytes) / 2)
         )
 
         # State machine
@@ -288,22 +287,24 @@ class Raven:
             self.template_chunks_left = self.num_template_chunks
 
         if self.template_chunks_left <= 0:
-            # No speech recently, so ignore chunk.
+            # No speech recently, so reset and ignore chunk.
+            self.template_audio_buffer = bytes()
+            self.template_mfcc = None
             return []
 
         self.template_audio_buffer += chunk
 
         # Process audio if there's enough for at least one template
-        num_templates = int(
-            math.floor(len(self.template_audio_buffer) / self.template_chunk_bytes)
-        )
-        if num_templates > 0:
+        while len(self.template_audio_buffer) >= self.template_chunk_bytes:
             # Compute MFCC features for entire audio buffer (one or more templates)
-            buffer_bytes = num_templates * self.template_chunk_bytes
-            buffer_chunk = self.template_audio_buffer[:buffer_bytes]
-            self.template_audio_buffer = self.template_audio_buffer[buffer_bytes:]
+            buffer_chunk = self.template_audio_buffer[: self.template_chunk_bytes]
+            self.template_audio_buffer = self.template_audio_buffer[
+                self.template_chunk_bytes :
+            ]
 
             buffer_array = np.frombuffer(buffer_chunk, dtype=np.int16)
+
+            mfcc_start_time = time.perf_counter()
             buffer_mfcc = python_speech_features.mfcc(
                 buffer_array, winstep=self.template_shift_sec
             )
@@ -314,11 +315,21 @@ class Raven:
                 # Add to existing MFCC matrix
                 self.template_mfcc = np.vstack((self.template_mfcc, buffer_mfcc))
 
-        mfcc_rows = 0 if (self.template_mfcc is None) else len(self.template_mfcc)
-        last_row = mfcc_rows - self.shifts_per_template
-        if last_row > 0:
-            assert self.template_mfcc is not None
-            for row in range(last_row):
+            if self.debug:
+                mfcc_end_time = time.perf_counter()
+                _LOGGER.debug(
+                    "MFCC for %s byte(s) in %s seconds",
+                    len(buffer_chunk),
+                    mfcc_end_time - mfcc_start_time,
+                )
+
+        last_row = (
+            -1
+            if (self.template_mfcc is None)
+            else (len(self.template_mfcc) - self.shifts_per_template + 1)
+        )
+        if last_row >= 0:
+            for row in range(last_row + 1):
                 match_start_time = time.perf_counter()
 
                 window_mfcc = self.template_mfcc[row : row + self.shifts_per_template]
@@ -334,7 +345,7 @@ class Raven:
 
                     return matching_indexes
 
-            self.template_mfcc = self.template_mfcc[last_row:]
+            self.template_mfcc = self.template_mfcc[last_row + 1 :]
 
         # No detections
         return []
