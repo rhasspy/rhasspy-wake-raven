@@ -60,10 +60,10 @@ $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
 This requires at least 1 of the 3 WAV templates to match before output like this is printed:
 
 ```json
-{"keyword": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": 0.5, "distance_threshold": 0.22, "tick": 1, "matches": 2}}
+{"keyword": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": 0.5, "distance_threshold": 0.22, "tick": 1, "matches": 2, "match_seconds": 0.005367016012314707}}
 ```
 
-Use `--minimum-matches` to change how many templates must match for a detection to occur. Adjust the sensitivity with `--probability-threshold` which sets the lower bound of the detection probability (default is 0.5).
+Use `--minimum-matches` to change how many templates must match for a detection to occur or `--average-templates` to combine all WAV templates into a single template (reduces CPU usage). Adjust the sensitivity with `--probability-threshold` which sets the lower bound of the detection probability (default is 0.5).
 
 ## Output
 
@@ -78,6 +78,7 @@ Raven outputs a line of JSON when the wake word is detected. Fields are:
     * `distance` - normalized dynamic time warping distance
     * `distance_threshold` - distance threshold used for comparison
     * `matches` - number of WAV templates that matched
+    * `match_seconds` - seconds taken for dynamic time warping calculations
     * `tick` - monotonic counter incremented for each detection
 
 ## Testing

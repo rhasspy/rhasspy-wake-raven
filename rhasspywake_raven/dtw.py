@@ -15,13 +15,10 @@ class DynamicTimeWarping:
     Uses cosine distance and sakoe-chiba constraint by default.
     """
 
-    def __init__(self, distance_func: str = "cosine", constraint_func=None):
+    def __init__(self, distance_func: str = "cosine"):
         self.cost_matrix: typing.Optional[np.ndarray] = None
         self.distance: typing.Optional[float] = None
         self.distance_func = distance_func or "cosine"
-
-        # Sakoe-Chiba
-        self.constraint_func = constraint_func or DynamicTimeWarping.sakoe_chiba
 
     def compute_cost(
         self,
@@ -172,8 +169,3 @@ class DynamicTimeWarping:
         self.distance = distance
 
         return distance
-
-    @staticmethod
-    def sakoe_chiba(row: int, col: int, window: int) -> bool:
-        """Constrain movement around main diagonal."""
-        return abs(row - col) <= window

@@ -3,7 +3,6 @@ import logging
 import math
 import time
 import typing
-from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 
@@ -17,12 +16,7 @@ from .dtw import DynamicTimeWarping
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
 
 
-class RavenState(int, Enum):
-    """State of Raven detector."""
-
-    IN_SILENCE = 0
-    IN_SPEECH = 1
-    IN_REFRACTORY = 2
+# -----------------------------------------------------------------------------
 
 
 @dataclass
@@ -83,6 +77,9 @@ class Template:
         )
 
 
+# -----------------------------------------------------------------------------
+
+
 class Raven:
     """
     Wakeword detector based on Snips Personal Wake Word Detector.
@@ -104,7 +101,7 @@ class Raven:
     distance_threshold: float = 0.22
         Cosine distance reference for probability calculation
 
-    frame_dtw: Optional[DynamicTimeWarping] = None
+    template_dtw: Optional[DynamicTimeWarping] = None
         DTW calculator (None for default)
 
     dtw_window_size: int = 5
@@ -113,19 +110,8 @@ class Raven:
     dtw_step_pattern: float = 2
         Replacement cost multipler in DTW calculation
 
-    sample_rate: int = 16000
-        Sample rate of audio chunks in Hertz.
-
-    chunk_size: int = 960
-        Size of audio chunks in bytes.
-        Must be 10, 20, or 30 ms for VAD calculation.
-        A sample width of 2 bytes (16 bits) is assumed.
-
     shift_sec: float = 0.01
         Seconds to shift overlapping window by
-
-    before_chunks: int = 0
-        Chunks of audio before speech to keep in window
 
     refractory_sec: float = 2
         Skip additional template calculations if probability is below this threshold
@@ -150,13 +136,10 @@ class Raven:
         probability_threshold: float = 0.5,
         minimum_matches: int = 0,
         distance_threshold: float = 0.22,
-        frame_dtw: typing.Optional[DynamicTimeWarping] = None,
+        template_dtw: typing.Optional[DynamicTimeWarping] = None,
         dtw_window_size: int = 5,
         dtw_step_pattern: float = 2,
-        sample_rate: int = 16000,
-        chunk_size: int = 960,
         shift_sec: float = 0.01,
-        before_chunks: int = 0,
         refractory_sec: float = 2.0,
         skip_probability_threshold: float = 0.0,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
@@ -165,30 +148,66 @@ class Raven:
         self.templates = templates
         assert self.templates, "No templates"
 
+        # Use or create silence detector
+        self.recorder = recorder or WebRtcVadRecorder()
+        self.vad_chunk_bytes = self.recorder.chunk_size
+        self.sample_rate = self.recorder.sample_rate
+
+        # Assume 16-bit samples
+        self.sample_width = 2
+        self.bytes_per_second = int(self.sample_rate * self.sample_width)
+
+        # Match settings
         self.probability_threshold = probability_threshold
         self.minimum_matches = minimum_matches
         self.distance_threshold = distance_threshold
         self.skip_probability_threshold = skip_probability_threshold
 
-        self.chunk_size = chunk_size
-        self.shift_sec = shift_sec
-        self.sample_rate = sample_rate
-
-        self.before_buffer: typing.Optional[typing.Deque[bytes]] = None
-        if before_chunks > 0:
-            self.before_buffer = deque(maxlen=before_chunks)
-
-        # Assume 16-bit samples
-        self.sample_width = 2
-        self.chunk_seconds = (self.chunk_size / self.sample_width) / self.sample_rate
-
-        # Use or create silence detector
-        self.recorder = recorder or WebRtcVadRecorder()
-
         # Dynamic time warping calculation
-        self.dtw = frame_dtw or DynamicTimeWarping()
+        self.dtw = template_dtw or DynamicTimeWarping()
         self.dtw_window_size = dtw_window_size
         self.dtw_step_pattern = dtw_step_pattern
+
+        # Average duration of templates
+        template_duration_sec = sum([t.duration_sec for t in templates]) / len(
+            templates
+        )
+
+        # Bytes needed for a template
+        self.template_chunk_bytes = int(
+            math.ceil(template_duration_sec * self.bytes_per_second)
+        )
+
+        # Ensure divisible by sample width
+        while (self.template_chunk_bytes % self.sample_width) != 0:
+            self.template_chunk_bytes += 1
+
+        # Seconds to shift template window by during processing
+        self.template_shift_sec = shift_sec
+        self.shifts_per_template = int(math.ceil(template_duration_sec / shift_sec))
+
+        # Audio
+        self.vad_audio_buffer = bytes()
+        self.template_audio_buffer = bytes()
+        self.template_mfcc: typing.Optional[np.ndarray] = None
+        self.template_chunks_left = 0
+        self.num_template_chunks = int(
+            math.ceil(self.template_chunk_bytes / self.vad_chunk_bytes)
+        )
+
+        # State machine
+        self.num_refractory_chunks = int(
+            math.ceil(
+                self.sample_rate
+                * self.sample_width
+                * (refractory_sec / self.vad_chunk_bytes)
+            )
+        )
+        self.refractory_chunks_left = 0
+        self.match_seconds: typing.Optional[float] = None
+
+        # If True, log DTW predictions
+        self.debug = debug
 
         # Keep previously-computed distances and probabilities for debugging
         self.last_distances: typing.List[typing.Optional[float]] = [
@@ -199,142 +218,129 @@ class Raven:
             None for _ in self.templates
         ]
 
-        # Average duration of templates
-        self.frame_duration_sec = sum([t.duration_sec for t in templates]) / len(
-            templates
-        )
-
-        # Size in bytes of a frame
-        self.window_chunk_size = (
-            self.seconds_to_chunks(self.frame_duration_sec)
-            * self.chunk_size
-            * self.sample_width
-        )
-
-        # Ensure divisible by sample width
-        while (self.window_chunk_size % self.sample_width) != 0:
-            self.window_chunk_size += 1
-
-        # Size in bytes to shift each frame.
-        # Should be less than the size of a frame to ensure overlap.
-        self.shift_size = (
-            self.seconds_to_chunks(self.shift_sec) * self.chunk_size * self.sample_width
-        )
-
-        # State machine
-        self.audio_buffer = bytes()
-        self.state = RavenState.IN_SILENCE
-        self.num_silence_chunks = self.seconds_to_chunks(self.frame_duration_sec)
-        self.silence_chunks_left = 0
-        self.num_refractory_chunks = self.seconds_to_chunks(refractory_sec)
-        self.refractory_chunks_left = 0
-        self.match_seconds: typing.Optional[float] = None
-
-        self.debug = debug
-
     def process_chunk(self, chunk: bytes) -> typing.List[int]:
         """Process a single chunk of raw audio data.
-
-        Must be the same length as self.chunk_size.
 
         Attributes
         ----------
 
         chunk: bytes
-          Raw audio chunk with one or more windows
+          Raw audio chunk
 
         Returns
         -------
 
         List of matching template indexes
         """
-        assert (
-            len(chunk) == self.chunk_size
-        ), f"Expected chunk length to be {self.chunk_size}, got {len(chunk)}"
+        self.vad_audio_buffer += chunk
 
-        if self.state == RavenState.IN_REFRACTORY:
+        # Break audio into VAD-sized chunks (typically 30 ms)
+        num_vad_chunks = int(
+            math.floor(len(self.vad_audio_buffer) / self.vad_chunk_bytes)
+        )
+        if num_vad_chunks > 0:
+            for i in range(num_vad_chunks):
+                # Process single VAD-sized chunk
+                matching_indexes = self._process_vad_chunk(i)
+                if matching_indexes:
+                    # Detection - reset and return immediately
+                    self.vad_audio_buffer = bytes()
+                    return matching_indexes
+
+            # Remove processed audio
+            self.vad_audio_buffer = self.vad_audio_buffer[
+                (num_vad_chunks * self.vad_chunk_bytes) :
+            ]
+
+        # No detection
+        return []
+
+    def _process_vad_chunk(self, chunk_index: int) -> typing.List[int]:
+        """Process the ith VAD-sized chunk of raw audio data from vad_audio_buffer.
+
+        Attributes
+        ----------
+
+        chunk_index: int
+            ith VAD-sized chunk in vad_audio_buffer
+
+        Returns
+        -------
+
+        List of matching template indexes
+        """
+        if self.refractory_chunks_left > 0:
             self.refractory_chunks_left -= 1
-            if self.refractory_chunks_left > 0:
-                # In refractory period
-                return []
-
-            # Done with refractory period
-            self.state = RavenState.IN_SILENCE
-            self.audio_buffer = bytes()
-
-            if self.before_buffer is not None:
-                self.before_buffer.clear()
-
-        # Keep chunks before detection
-        if self.before_buffer is not None:
-            self.before_buffer.append(chunk)
+            # In refractory period after wake word was detected.
+            # Ignore any incoming audio.
+            return []
 
         # Test chunk for silence/speech
-        vad_start_time = time.perf_counter()
+        chunk_start = chunk_index * self.vad_chunk_bytes
+        chunk = self.vad_audio_buffer[chunk_start : chunk_start + self.vad_chunk_bytes]
         is_silence = self.recorder.is_silence(chunk)
 
-        if self.debug:
-            vad_end_time = time.perf_counter()
-            _LOGGER.debug("VAD on chunk in %s second(s)", vad_end_time - vad_start_time)
-
-        if self.state == RavenState.IN_SILENCE:
-            # Only silence so far
-            if not is_silence:
-                # Start recording and checking audio
-                self.audio_buffer = bytes()
-
-                # Include some chunks before speech
-                if self.before_buffer is not None:
-                    for before_chunk in self.before_buffer:
-                        self.audio_buffer += before_chunk
-
-                    self.before_buffer.clear()
-
-                self.state = RavenState.IN_SPEECH
-                self.silence_chunks_left = self.num_silence_chunks
+        if is_silence:
+            # Decrement audio chunks left to process before ignoring audio
+            self.template_chunks_left = max(0, self.template_chunks_left - 1)
         else:
-            # Speech recently
-            if is_silence:
-                # Decrement chunk count and go back to sleep if there's too many
-                # silent chunks in a row.
-                self.silence_chunks_left = self.silence_chunks_left - 1
-                if self.silence_chunks_left <= 0:
-                    # Back to sleep
-                    self.state = RavenState.IN_SILENCE
+            # Reset count of audio chunks to process
+            self.template_chunks_left = self.num_template_chunks
+
+        if self.template_chunks_left <= 0:
+            # No speech recently, so ignore chunk.
+            return []
+
+        self.template_audio_buffer += chunk
+
+        # Process audio if there's enough for at least one template
+        num_templates = int(
+            math.floor(len(self.template_audio_buffer) / self.template_chunk_bytes)
+        )
+        if num_templates > 0:
+            # Compute MFCC features for entire audio buffer (one or more templates)
+            buffer_bytes = num_templates * self.template_chunk_bytes
+            buffer_chunk = self.template_audio_buffer[:buffer_bytes]
+            self.template_audio_buffer = self.template_audio_buffer[buffer_bytes:]
+
+            buffer_array = np.frombuffer(buffer_chunk, dtype=np.int16)
+            buffer_mfcc = python_speech_features.mfcc(
+                buffer_array, winstep=self.template_shift_sec
+            )
+            if self.template_mfcc is None:
+                # Brand new matrix
+                self.template_mfcc = buffer_mfcc
             else:
-                # Reset silence chunks
-                self.silence_chunks_left = self.num_silence_chunks
+                # Add to existing MFCC matrix
+                self.template_mfcc = np.vstack((self.template_mfcc, buffer_mfcc))
 
-        if self.state == RavenState.IN_SPEECH:
-            match_start_time = time.perf_counter()
+        mfcc_rows = 0 if (self.template_mfcc is None) else len(self.template_mfcc)
+        last_row = mfcc_rows - self.shifts_per_template
+        if last_row > 0:
+            assert self.template_mfcc is not None
+            for row in range(last_row):
+                match_start_time = time.perf_counter()
 
-            # Include audio for processing
-            self.audio_buffer += chunk
-
-            # Process all frames in buffer
-            while len(self.audio_buffer) >= self.window_chunk_size:
-                frame_chunk = self.audio_buffer[: self.window_chunk_size]
-
-                # Shift buffer into overlapping frame
-                self.audio_buffer = self.audio_buffer[self.shift_size :]
-
-                # Process single frame
-                frame = np.frombuffer(frame_chunk, dtype=np.int16)
-
-                matching_indexes = self._process_frame(frame)
+                window_mfcc = self.template_mfcc[row : row + self.shifts_per_template]
+                matching_indexes = self._process_window(window_mfcc)
                 if matching_indexes:
-                    # Reset state to avoid multiple detections.
-                    self.state = RavenState.IN_REFRACTORY
+                    # Clear buffers to avoid multiple detections and entire refractory period
+                    self.template_audio_buffer = bytes()
+                    self.template_mfcc = None
                     self.refractory_chunks_left = self.num_refractory_chunks
+
+                    # Record time for debugging
                     self.match_seconds = time.perf_counter() - match_start_time
 
                     return matching_indexes
 
+            self.template_mfcc = self.template_mfcc[last_row:]
+
         # No detections
         return []
 
-    def _process_frame(self, frame: np.ndarray) -> typing.List[int]:
-        """Process a single overlapping frame of audio data.
+    def _process_window(self, window_mfcc: np.ndarray) -> typing.List[int]:
+        """Process a single template-sized window of MFCC features.
 
         Returns
         -------
@@ -343,26 +349,19 @@ class Raven:
         """
         matching_indexes: typing.List[int] = []
 
-        mfcc_start_time = time.perf_counter()
-        frame_mfcc = python_speech_features.mfcc(frame, self.sample_rate)
-        if self.debug:
-            mfcc_end_time = time.perf_counter()
-            _LOGGER.debug(
-                "MFCC on frame in %s second(s)", mfcc_end_time - mfcc_start_time
-            )
-
         for i, template in enumerate(self.templates):
             # Compute optimal distance with a window
             dtw_start_time = time.perf_counter()
+
             distance = self.dtw.compute_cost(
                 template.mfcc,
-                frame_mfcc,
+                window_mfcc,
                 self.dtw_window_size,
                 step_pattern=self.dtw_step_pattern,
             )
 
             # Normalize by sum of temporal dimensions
-            normalized_distance = distance / (len(frame_mfcc) + len(template.mfcc))
+            normalized_distance = distance / (len(window_mfcc) + len(template.mfcc))
 
             # Compute detection probability
             probability = self.distance_to_probability(normalized_distance)
@@ -398,9 +397,7 @@ class Raven:
 
         return matching_indexes
 
-    def seconds_to_chunks(self, seconds: float) -> int:
-        """Compute number of chunks needed to cover some seconds of audio."""
-        return int(math.ceil(seconds / (self.chunk_size / self.sample_rate)))
+    # -------------------------------------------------------------------------
 
     def distance_to_probability(self, normalized_distance: float) -> float:
         """Compute detection probability using distance and threshold."""

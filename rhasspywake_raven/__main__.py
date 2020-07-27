@@ -26,6 +26,11 @@ def main():
         "templates", nargs="+", help="Path to WAV file templates or directories"
     )
     parser.add_argument(
+        "--chunk-size",
+        default=2048,
+        help="Number of bytes to read at a time from standard in (default: 2048)",
+    )
+    parser.add_argument(
         "--record",
         help="Record example templates with given name format (e.g., 'okay-rhasspy-{n:02d}.wav')",
     )
@@ -186,6 +191,7 @@ def main():
     else:
         audio_buffer = sys.stdin.buffer
 
+    # Process audio in a separate thread to avoid overrun
     chunk_queue = Queue()
     detect_thread = threading.Thread(
         target=detect_thread_proc, args=(chunk_queue, raven, args), daemon=True
@@ -196,17 +202,10 @@ def main():
     try:
         while True:
             # Read raw audio chunk
-            chunk = audio_buffer.read(raven.chunk_size)
+            chunk = audio_buffer.read(args.chunk_size)
             if not chunk:
                 # Empty chunk
                 break
-
-            # Ensure chunk is the right size
-            while len(chunk) < raven.chunk_size:
-                chunk += audio_buffer.read(raven.chunk_size - len(chunk))
-                if not chunk:
-                    # Empty chunk
-                    break
 
             chunk_queue.put(chunk)
 
@@ -234,6 +233,7 @@ def detect_thread_proc(chunk_queue, raven, args):
     while True:
 
         if args.max_chunks_in_queue is not None:
+            # Drop audio chunks to bring queue size back down
             dropped_chunks = 0
             while chunk_queue.qsize() > args.max_chunks_in_queue:
                 chunk = chunk_queue.get()
@@ -244,6 +244,7 @@ def detect_thread_proc(chunk_queue, raven, args):
 
         chunk = chunk_queue.get()
         if chunk is None:
+            # Empty chunk indicates we should exit
             break
 
         # Get matching audio templates (if any)
