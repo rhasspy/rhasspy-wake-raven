@@ -4,7 +4,6 @@ import math
 import time
 import typing
 from dataclasses import dataclass
-from enum import Enum
 
 import numpy as np
 import python_speech_features
@@ -329,6 +328,7 @@ class Raven:
             else (len(self.template_mfcc) - self.shifts_per_template + 1)
         )
         if last_row >= 0:
+            assert self.template_mfcc is not None
             for row in range(last_row + 1):
                 match_start_time = time.perf_counter()
 
