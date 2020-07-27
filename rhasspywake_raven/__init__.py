@@ -174,11 +174,14 @@ class Raven:
 
         # Seconds to shift template window by during processing
         self.template_shift_sec = shift_sec
-        self.shifts_per_template = int(math.ceil(template_duration_sec / shift_sec))
+        self.shifts_per_template = (
+            int(math.floor(template_duration_sec / shift_sec)) - 1
+        )
 
         # Bytes needed for a template
-        shift_bytes = int(math.ceil(shift_sec * self.bytes_per_second))
-        self.template_chunk_bytes = int(self.shifts_per_template * shift_bytes)
+        self.template_chunk_bytes = int(
+            math.ceil(template_duration_sec * self.bytes_per_second)
+        )
 
         # Ensure divisible by sample width
         while (self.template_chunk_bytes % self.sample_width) != 0:
@@ -190,7 +193,7 @@ class Raven:
         self.template_mfcc: typing.Optional[np.ndarray] = None
         self.template_chunks_left = 0
         self.num_template_chunks = int(
-            math.ceil((self.template_chunk_bytes / self.vad_chunk_bytes) / 2)
+            math.ceil((self.template_chunk_bytes / self.vad_chunk_bytes) / 4)
         )
 
         # State machine
@@ -325,7 +328,7 @@ class Raven:
         last_row = (
             -1
             if (self.template_mfcc is None)
-            else (len(self.template_mfcc) - self.shifts_per_template + 1)
+            else (len(self.template_mfcc) - self.shifts_per_template)
         )
         if last_row >= 0:
             assert self.template_mfcc is not None
