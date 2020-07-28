@@ -27,8 +27,8 @@ def main():
     )
     parser.add_argument(
         "--chunk-size",
-        default=1024,
-        help="Number of bytes to read at a time from standard in (default: 1024)",
+        default=1920,
+        help="Number of bytes to read at a time from standard in (default: 1920)",
     )
     parser.add_argument(
         "--record",
@@ -66,8 +66,8 @@ def main():
     parser.add_argument(
         "--window-shift-seconds",
         type=float,
-        default=0.01,
-        help="Seconds to shift sliding time window on audio buffer (default: 0.01)",
+        default=Raven.DEFAULT_SHIFT_SECONDS,
+        help=f"Seconds to shift sliding time window on audio buffer (default: {Raven.DEFAULT_SHIFT_SECONDS})",
     )
     parser.add_argument(
         "--dtw-window-size",
@@ -166,7 +166,11 @@ def main():
             # Add file directly
             template_paths.append(template_path)
 
-    templates = [Raven.wav_to_template(p, name=str(p)) for p in template_paths]
+    templates = [
+        Raven.wav_to_template(p, name=str(p), shift_sec=args.window_shift_seconds)
+        for p in template_paths
+    ]
+
     if args.average_templates:
         _LOGGER.debug("Averaging %s templates", len(templates))
         templates = [Template.average_templates(templates)]

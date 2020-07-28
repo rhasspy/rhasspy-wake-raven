@@ -14,7 +14,6 @@ from .dtw import DynamicTimeWarping
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
 
-
 # -----------------------------------------------------------------------------
 
 
@@ -109,7 +108,7 @@ class Raven:
     dtw_step_pattern: float = 2
         Replacement cost multipler in DTW calculation
 
-    shift_sec: float = 0.01
+    shift_sec: float = DEFAULT_SHIFT_SECONDS
         Seconds to shift overlapping window by
 
     refractory_sec: float = 2
@@ -129,6 +128,8 @@ class Raven:
         If True, template probability calculations are logged
     """
 
+    DEFAULT_SHIFT_SECONDS = 0.02
+
     def __init__(
         self,
         templates: typing.List[Template],
@@ -138,7 +139,7 @@ class Raven:
         template_dtw: typing.Optional[DynamicTimeWarping] = None,
         dtw_window_size: int = 5,
         dtw_step_pattern: float = 2,
-        shift_sec: float = 0.01,
+        shift_sec: float = DEFAULT_SHIFT_SECONDS,
         refractory_sec: float = 2.0,
         skip_probability_threshold: float = 0.0,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
@@ -193,7 +194,7 @@ class Raven:
         self.template_mfcc: typing.Optional[np.ndarray] = None
         self.template_chunks_left = 0
         self.num_template_chunks = int(
-            math.ceil((self.template_chunk_bytes / self.vad_chunk_bytes) / 4)
+            math.ceil((self.template_chunk_bytes / self.vad_chunk_bytes) / 2)
         )
 
         # State machine
@@ -424,10 +425,12 @@ class Raven:
         )
 
     @staticmethod
-    def wav_to_template(wav_file, name: str = "") -> Template:
+    def wav_to_template(
+        wav_file, name: str = "", shift_sec: float = DEFAULT_SHIFT_SECONDS
+    ) -> Template:
         """Convert pre-trimmed WAV file to wakeword template."""
         sample_rate, wav_data = scipy.io.wavfile.read(wav_file)
         duration_sec = len(wav_data) / sample_rate
-        wav_mfcc = python_speech_features.mfcc(wav_data, sample_rate)
+        wav_mfcc = python_speech_features.mfcc(wav_data, sample_rate, winstep=shift_sec)
 
         return Template(name=name, duration_sec=duration_sec, mfcc=wav_mfcc)
