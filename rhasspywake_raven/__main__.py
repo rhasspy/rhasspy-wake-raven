@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 
@@ -17,13 +18,32 @@ from . import Raven, Template
 from .utils import buffer_to_wav, trim_silence
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")
+_EXIT_NOW = False
+
+# -----------------------------------------------------------------------------
+
+
+@dataclass
+class RavenInstance:
+    """Running instance of Raven (one per keyword)."""
+
+    thread: threading.Thread
+    raven: Raven
+    chunk_queue: "Queue[bytes]"
+
+
+# -----------------------------------------------------------------------------
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(prog="rhasspy-wake-raven")
     parser.add_argument(
-        "templates", nargs="+", help="Path to WAV file templates or directories"
+        "--keyword",
+        action="append",
+        nargs="+",
+        default=[],
+        help="Directory with WAV templates and settings (setting-name=value)",
     )
     parser.add_argument(
         "--chunk-size",
@@ -32,7 +52,8 @@ def main():
     )
     parser.add_argument(
         "--record",
-        help="Record example templates with given name format (e.g., 'okay-rhasspy-{n:02d}.wav')",
+        nargs="+",
+        help="Record example templates to a directory, optionally with given name format (e.g., 'my-keyword-{n:02d}.wav')",
     )
     parser.add_argument(
         "--probability-threshold",
@@ -144,7 +165,8 @@ def main():
     else:
         logging.basicConfig(level=logging.INFO)
 
-    # Create silence detector
+    # Create silence detector.
+    # This can be shared by Raven instances because it's not maintaining state.
     recorder = WebRtcVadRecorder(
         vad_mode=args.vad_sensitivity,
         silence_method=args.silence_method,
@@ -157,42 +179,100 @@ def main():
 
     if args.record:
         # Do recording instead of recognizing
-        return record_templates(args.record, recorder, args)
+        record_dir = Path(args.record[0])
+        if len(args.record) > 1:
+            record_format = args.record[1]
+        else:
+            record_format = "example-{n:02d}.wav"
 
-    # Load audio templates
-    template_paths: typing.List[Path] = []
-    for template_path_str in args.templates:
-        template_path = Path(template_path_str)
-        if template_path.is_dir():
-            # Add all WAV files from directory
-            _LOGGER.debug("Adding WAV files from directory %s", template_path)
-            template_paths.extend(template_path.glob("*.wav"))
-        elif template_path.is_file():
-            # Add file directly
-            template_paths.append(template_path)
+        return record_templates(record_dir, record_format, recorder, args)
 
-    templates = [
-        Raven.wav_to_template(p, name=str(p), shift_sec=args.window_shift_seconds)
-        for p in template_paths
-    ]
+    assert args.keyword, "--keyword is required"
 
-    if args.average_templates:
-        _LOGGER.debug("Averaging %s templates", len(templates))
-        templates = [Template.average_templates(templates)]
+    # Instances of Raven that will run in separate threads
+    ravens: typing.List[RavenInstance] = []
 
-    # Create Raven object
-    raven = Raven(
-        templates=templates,
-        recorder=recorder,
-        probability_threshold=args.probability_threshold,
-        minimum_matches=args.minimum_matches,
-        distance_threshold=args.distance_threshold,
-        refractory_sec=args.refractory_seconds,
-        shift_sec=args.window_shift_seconds,
-        skip_probability_threshold=args.skip_probability_threshold,
-        failed_matches_to_refractory=args.failed_matches_to_refractory,
-        debug=args.debug,
+    # Queue for detections. Handled in separate thread.
+    output_queue = Queue()
+
+    # Load one or more keywords
+    for keyword_settings in args.keyword:
+        template_dir = Path(keyword_settings[0])
+        wav_paths = list(template_dir.glob("*.wav"))
+        if not wav_paths:
+            _LOGGER.warning("No WAV files found in %s", template_dir)
+            continue
+
+        keyword_name = template_dir.name
+
+        # Load audio templates
+        keyword_templates = [
+            Raven.wav_to_template(p, name=str(p), shift_sec=args.window_shift_seconds)
+            for p in wav_paths
+        ]
+
+        raven_args = {
+            "templates": keyword_templates,
+            "keyword_name": keyword_name,
+            "recorder": recorder,
+            "probability_threshold": args.probability_threshold,
+            "minimum_matches": args.minimum_matches,
+            "distance_threshold": args.distance_threshold,
+            "refractory_sec": args.refractory_seconds,
+            "shift_sec": args.window_shift_seconds,
+            "skip_probability_threshold": args.skip_probability_threshold,
+            "failed_matches_to_refractory": args.failed_matches_to_refractory,
+            "debug": args.debug,
+        }
+
+        # Apply settings
+        average_templates = args.average_templates
+        for setting_str in keyword_settings[1:]:
+            setting_name, setting_value = setting_str.strip().split("=", maxsplit=1)
+            setting_name = setting_name.lower()
+
+            if setting_name == "name":
+                raven_args["keyword_name"] = setting_value
+            elif setting_name == "probability-threshold":
+                raven_args["probability_threshold"] = float(setting_value)
+            elif setting_name == "minimum-matches":
+                raven_args["minimum_matches"] = int(setting_value)
+            elif setting_name == "average-templates":
+                average_templates = setting_value.lower().strip() == "true"
+
+        if average_templates:
+            _LOGGER.debug(
+                "Averaging %s templates for %s", len(keyword_templates), template_dir
+            )
+            raven_args["templates"] = [Template.average_templates(keyword_templates)]
+
+        # Create instance of Raven in a separate thread for keyword
+        raven = Raven(**raven_args)
+        chunk_queue: "Queue[bytes]" = Queue()
+
+        ravens.append(
+            RavenInstance(
+                thread=threading.Thread(
+                    target=detect_thread_proc,
+                    args=(chunk_queue, raven, output_queue, args),
+                    daemon=True,
+                ),
+                raven=raven,
+                chunk_queue=chunk_queue,
+            )
+        )
+
+    # Start all threads
+    for raven_inst in ravens:
+        raven_inst.thread.start()
+
+    output_thread = threading.Thread(
+        target=output_thread_proc, args=(output_queue,), daemon=True
     )
+
+    output_thread.start()
+
+    # -------------------------------------------------------------------------
 
     print("Reading 16-bit 16Khz raw audio from stdin...", file=sys.stderr)
 
@@ -201,42 +281,47 @@ def main():
     else:
         audio_buffer = sys.stdin.buffer
 
-    # Process audio in a separate thread to avoid overrun
-    chunk_queue = Queue()
-    detect_thread = threading.Thread(
-        target=detect_thread_proc, args=(chunk_queue, raven, args), daemon=True
-    )
-
-    detect_thread.start()
-
     try:
         while True:
             # Read raw audio chunk
             chunk = audio_buffer.read(args.chunk_size)
-            if not chunk:
+            if not chunk or _EXIT_NOW:
                 # Empty chunk
                 break
 
-            chunk_queue.put(chunk)
+            # Add to all detector threads
+            for raven_inst in ravens:
+                raven_inst.chunk_queue.put(chunk)
 
     except KeyboardInterrupt:
         pass
     finally:
         if not args.read_entire_input:
-            # Exhaust queue
-            while not chunk_queue.empty():
-                chunk_queue.get()
+            # Exhaust queues
+            _LOGGER.debug("Emptying audio queues...")
+            for raven_inst in ravens:
+                while not raven_inst.chunk_queue.empty():
+                    raven_inst.chunk_queue.get()
 
-        # Signal thread to quit
-        chunk_queue.put(None)
-        detect_thread.join()
+        for raven_inst in ravens:
+            # Signal thread to quit
+            raven_inst.chunk_queue.put(None)
+            _LOGGER.debug("Waiting for %s thread...", raven_inst.raven.keyword_name)
+            raven_inst.thread.join()
+
+        # Stop output thread
+        output_queue.put(None)
+        _LOGGER.debug("Waiting for output thread...")
+        output_thread.join()
 
 
 # -----------------------------------------------------------------------------
 
 
-def detect_thread_proc(chunk_queue, raven, args):
-    """Template matching in a separated thread."""
+def detect_thread_proc(chunk_queue, raven, output_queue, args):
+    """Template matching in a separate thread."""
+    global _EXIT_NOW
+
     detect_tick = 0
     start_time = time.time()
 
@@ -269,23 +354,22 @@ def detect_thread_proc(chunk_queue, raven, args):
                 distance = raven.last_distances[template_index]
                 probability = raven.last_probabilities[template_index]
 
-                print(
-                    json.dumps(
-                        {
-                            "keyword": template.name,
-                            "detect_seconds": detect_time - start_time,
-                            "detect_timestamp": detect_time,
-                            "raven": {
-                                "probability": probability,
-                                "distance": distance,
-                                "probability_threshold": args.probability_threshold,
-                                "distance_threshold": raven.distance_threshold,
-                                "tick": detect_tick,
-                                "matches": len(matching_indexes),
-                                "match_seconds": raven.match_seconds,
-                            },
-                        }
-                    )
+                output_queue.put(
+                    {
+                        "keyword": raven.keyword_name,
+                        "template": template.name,
+                        "detect_seconds": detect_time - start_time,
+                        "detect_timestamp": detect_time,
+                        "raven": {
+                            "probability": probability,
+                            "distance": distance,
+                            "probability_threshold": args.probability_threshold,
+                            "distance_threshold": raven.distance_threshold,
+                            "tick": detect_tick,
+                            "matches": len(matching_indexes),
+                            "match_seconds": raven.match_seconds,
+                        },
+                    }
                 )
 
                 if not args.print_all_matches:
@@ -294,20 +378,22 @@ def detect_thread_proc(chunk_queue, raven, args):
 
         # Check if we need to exit
         if (args.exit_count is not None) and (detect_tick >= args.exit_count):
-            sys.exit(0)
+            _EXIT_NOW = True
 
 
 # -----------------------------------------------------------------------------
 
 
 def record_templates(
-    name_format: str, recorder: WebRtcVadRecorder, args: argparse.Namespace
+    record_dir: Path,
+    name_format: str,
+    recorder: WebRtcVadRecorder,
+    args: argparse.Namespace,
 ):
     """Record audio templates."""
     print("Reading 16-bit 16Khz mono audio from stdin...", file=sys.stderr)
 
     num_templates = 0
-    template_dir = Path(args.templates[0])
 
     try:
         print(
@@ -327,7 +413,7 @@ def record_templates(
                 audio_bytes = recorder.stop()
                 audio_bytes = trim_silence(audio_bytes)
 
-                template_path = template_dir / name_format.format(n=num_templates)
+                template_path = record_dir / name_format.format(n=num_templates)
                 template_path.parent.mkdir(parents=True, exist_ok=True)
 
                 wav_bytes = buffer_to_wav(audio_bytes)
@@ -343,6 +429,19 @@ def record_templates(
                 recorder.start()
     except KeyboardInterrupt:
         print("Done")
+
+
+# -----------------------------------------------------------------------------
+
+
+def output_thread_proc(dict_queue):
+    """Outputs a line of JSON for each detection."""
+    while True:
+        output_dict = dict_queue.get()
+        if output_dict is None:
+            break
+
+        print(json.dumps(output_dict), flush=True)
 
 
 # -----------------------------------------------------------------------------

@@ -28,10 +28,17 @@ Record at least 3 WAV templates with your wake word:
 
 ```sh
 $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
-    bin/rhasspy-wake-raven --record 'my-wake-word-{n:02d}.wav' my-wake-word/
+    bin/rhasspy-wake-raven --record keyword-dir/
 ```
 
-Follow the prompts and speak your wake word. When you've recorded at least 3 examples, hit CTRL+C to exit. Your WAV templates will have silence automatically trimmed, and will be saved in the directory `my-wake-word/`.
+Follow the prompts and speak your wake word. When you've recorded at least 3 examples, hit CTRL+C to exit. Your WAV templates will have silence automatically trimmed, and will be saved in the directory `keyword-dir/`. Add a format string after the directory name to control the file names:
+
+```sh
+$ arecord -r 16000 -f S16_LE -c 1 -t raw | \
+    bin/rhasspy-wake-raven --record keyword-dir/ 'keyword-{n:02d}.wav'
+```
+
+The format string will receive the 0-based index `n` for each example.
 
 If you want to manually record WAV templates, trim silence off the front and back and make sure to export them as 16-bit 16Khz mono WAV files.
 
@@ -41,10 +48,21 @@ After recording your WAV templates in a directory, run:
 
 ```sh
 $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
-    bin/rhasspy-wake-raven <WAV_DIR> ...
+    bin/rhasspy-wake-raven --keyword <WAV_DIR> ...
 ```
 
-where `<WAV_DIR>` contains the WAV templates. You may also specify individual WAV files.
+where `<WAV_DIR>` contains the WAV templates. You may add as many keywords as you'd like, though this will use additional CPU. It's recommended you use `--average-templates` to keep CPU usage down.
+
+Some settings can be specified per-keyword:
+
+```sh
+$ arecord -r 16000 -f S16_LE -c 1 -t raw | \
+    bin/rhasspy-wake-raven \
+      --keyword keyword1/ name=my-keyword1 probability-threshold=0.45 minimum-matches=2 \
+      --keyword keyword2/ name=my-keyword2 probability-threshold=0.55 average-templates=true
+```
+
+If not set, `probability-threshold=`, etc. fall back on the values supplied to `--probability-threshold`, etc.
 
 Add `--debug` to the command line to get more information about the underlying computation on each audio frame.
 
@@ -54,13 +72,13 @@ Using the example files for "okay rhasspy":
 
 ```sh
 $ arecord -r 16000 -f S16_LE -c 1 -t raw | \
-    bin/rhasspy-wake-raven etc/okay-rhasspy/
+    bin/rhasspy-wake-raven --keyword etc/okay-rhasspy/
 ```
 
 This requires at least 1 of the 3 WAV templates to match before output like this is printed:
 
 ```json
-{"keyword": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": 0.5, "distance_threshold": 0.22, "tick": 1, "matches": 2, "match_seconds": 0.005367016012314707}}
+{"keyword": "okay-rhasspy", "template": "etc/okay-rhasspy/okay-rhasspy-00.wav", "detect_seconds": 2.7488508224487305, "detect_timestamp": 1594996988.638912, "raven": {"probability": 0.45637207995699963, "distance": 0.25849045215799454, "probability_threshold": 0.5, "distance_threshold": 0.22, "tick": 1, "matches": 2, "match_seconds": 0.005367016012314707}}
 ```
 
 Use `--minimum-matches` to change how many templates must match for a detection to occur or `--average-templates` to combine all WAV templates into a single template (reduces CPU usage). Adjust the sensitivity with `--probability-threshold` which sets the lower bound of the detection probability (default is 0.5).
@@ -69,7 +87,8 @@ Use `--minimum-matches` to change how many templates must match for a detection 
 
 Raven outputs a line of JSON when the wake word is detected. Fields are:
 
-* `keyword` - path to WAV file template
+* `keyword` - name of keyword or directory
+* `template` - path to WAV file template
 * `detect_seconds` - seconds after start of program when detection occurred
 * `detect_timestamp` - timestamp when detection occurred (using `time.time()`)
 * `raven`
@@ -86,7 +105,7 @@ Raven outputs a line of JSON when the wake word is detected. Fields are:
 You can test how well Raven works on a set of sample WAV files:
 
 ```sh
-$ PATH=$PWD/bin:$PATH test-raven.py --test-directory /path/to/samples/ /path/to/templates/
+$ PATH=$PWD/bin:$PATH test-raven.py --test-directory /path/to/samples/ --keyword /path/to/templates/
 ```
 
 This will run up to 10 parallel instances of Raven (change with `--test-workers`) and output a JSON report with detection information and summary statistics like:
@@ -111,7 +130,9 @@ Any additional command-line arguments are passed to Raven (e.g., `--minimum-matc
 ## Command-Line Interface
 
 ```
-usage: rhasspy-wake-raven [-h] [--chunk-size CHUNK_SIZE] [--record RECORD]
+usage: rhasspy-wake-raven [-h] [--keyword KEYWORD [KEYWORD ...]]
+                          [--chunk-size CHUNK_SIZE]
+                          [--record RECORD [RECORD ...]]
                           [--probability-threshold PROBABILITY_THRESHOLD]
                           [--distance-threshold DISTANCE_THRESHOLD]
                           [--minimum-matches MINIMUM_MATCHES]
@@ -130,18 +151,19 @@ usage: rhasspy-wake-raven [-h] [--chunk-size CHUNK_SIZE] [--record RECORD]
                           [--skip-probability-threshold SKIP_PROBABILITY_THRESHOLD]
                           [--failed-matches-to-refractory FAILED_MATCHES_TO_REFRACTORY]
                           [--debug]
-                          templates [templates ...]
-
-positional arguments:
-  templates             Path to WAV file templates or directories
 
 optional arguments:
   -h, --help            show this help message and exit
+  --keyword KEYWORD [KEYWORD ...]
+                        Directory with WAV templates and settings (setting-
+                        name=value)
   --chunk-size CHUNK_SIZE
                         Number of bytes to read at a time from standard in
                         (default: 1920)
-  --record RECORD       Record example templates with given name format (e.g.,
-                        'okay-rhasspy-{n:02d}.wav')
+  --record RECORD [RECORD ...]
+                        Record example templates to a directory, optionally
+                        with given name format (e.g., 'my-
+                        keyword-{n:02d}.wav')
   --probability-threshold PROBABILITY_THRESHOLD
                         Probability above which detection occurs (default:
                         0.5)

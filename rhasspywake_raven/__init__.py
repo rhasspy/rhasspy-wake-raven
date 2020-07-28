@@ -138,6 +138,7 @@ class Raven:
     def __init__(
         self,
         templates: typing.List[Template],
+        keyword_name: str = "",
         probability_threshold: float = 0.5,
         minimum_matches: int = 0,
         distance_threshold: float = 0.22,
@@ -153,6 +154,8 @@ class Raven:
     ):
         self.templates = templates
         assert self.templates, "No templates"
+
+        self.keyword_name = keyword_name
 
         # Use or create silence detector
         self.recorder = recorder or WebRtcVadRecorder()
@@ -420,7 +423,8 @@ class Raven:
             if self.debug:
                 dtw_end_time = time.perf_counter()
                 _LOGGER.debug(
-                    "Template %s: prob=%s, norm_dist=%s, dist=%s, dtw_time=%s, template_time=%s",
+                    "%s %s: prob=%s, norm_dist=%s, dist=%s, dtw_time=%s, template_time=%s",
+                    self.keyword_name,
                     i,
                     probability,
                     normalized_distance,
