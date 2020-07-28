@@ -111,8 +111,8 @@ Any additional command-line arguments are passed to Raven (e.g., `--minimum-matc
 ## Command-Line Interface
 
 ```
-usage: rhasspy-wake-raven [-h]
-                          [--probability-threshold PROBABILITY_THRESHOLD PROBABILITY_THRESHOLD]
+usage: rhasspy-wake-raven [-h] [--chunk-size CHUNK_SIZE] [--record RECORD]
+                          [--probability-threshold PROBABILITY_THRESHOLD]
                           [--distance-threshold DISTANCE_THRESHOLD]
                           [--minimum-matches MINIMUM_MATCHES]
                           [--refractory-seconds REFRACTORY_SECONDS]
@@ -124,17 +124,27 @@ usage: rhasspy-wake-raven [-h]
                           [--max-energy MAX_ENERGY]
                           [--max-current-ratio-threshold MAX_CURRENT_RATIO_THRESHOLD]
                           [--silence-method {vad_only,ratio_only,current_only,vad_and_ratio,vad_and_current,all}]
-                          [--average-templates] [--debug]
+                          [--average-templates] [--exit-count EXIT_COUNT]
+                          [--read-entire-input]
+                          [--max-chunks-in-queue MAX_CHUNKS_IN_QUEUE]
+                          [--skip-probability-threshold SKIP_PROBABILITY_THRESHOLD]
+                          [--failed-matches-to-refractory FAILED_MATCHES_TO_REFRACTORY]
+                          [--debug]
                           templates [templates ...]
 
 positional arguments:
-  templates             Path to WAV file templates
+  templates             Path to WAV file templates or directories
 
 optional arguments:
   -h, --help            show this help message and exit
-  --probability-threshold PROBABILITY_THRESHOLD PROBABILITY_THRESHOLD
-                        Probability range where detection occurs (default:
-                        (0.45, 0.55))
+  --chunk-size CHUNK_SIZE
+                        Number of bytes to read at a time from standard in
+                        (default: 1920)
+  --record RECORD       Record example templates with given name format (e.g.,
+                        'okay-rhasspy-{n:02d}.wav')
+  --probability-threshold PROBABILITY_THRESHOLD
+                        Probability above which detection occurs (default:
+                        0.5)
   --distance-threshold DISTANCE_THRESHOLD
                         Normalized dynamic time warping distance threshold for
                         template matching (default: 0.22)
@@ -148,7 +158,7 @@ optional arguments:
                         the first one
   --window-shift-seconds WINDOW_SHIFT_SECONDS
                         Seconds to shift sliding time window on audio buffer
-                        (default: 0.05)
+                        (default: 0.02)
   --dtw-window-size DTW_WINDOW_SIZE
                         Size of band around slanted diagonal during dynamic
                         time warping calculation (default: 5)
@@ -166,5 +176,18 @@ optional arguments:
                         Method for detecting silence
   --average-templates   Average wakeword templates together to reduce number
                         of calculations
+  --exit-count EXIT_COUNT
+                        Exit after some number of detections (default: never)
+  --read-entire-input   Read entire audio input at start and exit after
+                        processing
+  --max-chunks-in-queue MAX_CHUNKS_IN_QUEUE
+                        Maximum number of audio chunks waiting for processing
+                        before being dropped
+  --skip-probability-threshold SKIP_PROBABILITY_THRESHOLD
+                        Skip additional template calculations if probability
+                        is below this threshold
+  --failed-matches-to-refractory FAILED_MATCHES_TO_REFRACTORY
+                        Number of failed template matches before entering
+                        refractory period (default: disabled)
   --debug               Print DEBUG messages to the console
 ```

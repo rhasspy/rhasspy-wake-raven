@@ -111,18 +111,23 @@ class Raven:
     shift_sec: float = DEFAULT_SHIFT_SECONDS
         Seconds to shift overlapping window by
 
+    refractory_sec: float = 2
+        Seconds after detection that new detection cannot occur
+
     skip_probability_threshold: float = 0.0
         Skip additional template calculations if probability is below this threshold
 
-    refractory_sec: float = 2
-        Seconds after detection that new detection cannot occur
+    failed_matches_to_refractory: Optional[int] = None
+        Number of failed template matches before entering refractory period.
+        Used to avoid high CPU usage and lag on low end systems.
 
     recorder: Optional[WebRtcVadRecorder] = None
         Silence detector (None for default settings).
         MFCC/DTW calculations are only done when a non-silent chunk of audio is
         detected. Calculations cease if at least N silence chunks are detected
-        afterwards where N is the number of chunks needed to span the average
-        template duration. No calculations are done during refractory period.
+        afterwards where N is half the number of chunks needed to span the
+        average template duration. No calculations are done during refractory
+        period.
 
     debug: bool = False
         If True, template probability calculations are logged
@@ -194,6 +199,7 @@ class Raven:
         # Audio
         self.vad_audio_buffer = bytes()
         self.template_audio_buffer = bytes()
+        self.example_audio_buffer = bytes()
         self.template_mfcc: typing.Optional[np.ndarray] = None
         self.template_chunks_left = 0
         self.num_template_chunks = int(
@@ -224,7 +230,7 @@ class Raven:
             None for _ in self.templates
         ]
 
-    def process_chunk(self, chunk: bytes) -> typing.List[int]:
+    def process_chunk(self, chunk: bytes, keep_audio: bool = False) -> typing.List[int]:
         """Process a single chunk of raw audio data.
 
         Attributes
@@ -247,7 +253,7 @@ class Raven:
         if num_vad_chunks > 0:
             for i in range(num_vad_chunks):
                 # Process single VAD-sized chunk
-                matching_indexes = self._process_vad_chunk(i)
+                matching_indexes = self._process_vad_chunk(i, keep_audio=keep_audio)
                 if matching_indexes:
                     # Detection - reset and return immediately
                     self.vad_audio_buffer = bytes()
@@ -261,7 +267,9 @@ class Raven:
         # No detection
         return []
 
-    def _process_vad_chunk(self, chunk_index: int) -> typing.List[int]:
+    def _process_vad_chunk(
+        self, chunk_index: int, keep_audio: bool = False
+    ) -> typing.List[int]:
         """Process the ith VAD-sized chunk of raw audio data from vad_audio_buffer.
 
         Attributes
@@ -283,6 +291,9 @@ class Raven:
             if self.refractory_chunks_left <= 0:
                 _LOGGER.debug("Exiting refractory period")
 
+            if keep_audio:
+                self.example_audio_buffer = bytes()
+
             # In refractory period after wake word was detected.
             # Ignore any incoming audio.
             return matching_indexes
@@ -302,9 +313,16 @@ class Raven:
         if self.template_chunks_left <= 0:
             # No speech recently, so reset and ignore chunk.
             self._reset_state()
+
+            if keep_audio:
+                self.example_audio_buffer = bytes()
+
             return matching_indexes
 
         self.template_audio_buffer += chunk
+
+        if keep_audio:
+            self.example_audio_buffer += chunk
 
         # Process audio if there's enough for at least one template
         while len(self.template_audio_buffer) >= self.template_chunk_bytes:
