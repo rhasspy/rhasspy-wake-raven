@@ -130,6 +130,11 @@ def main():
         help="Skip additional template calculations if probability is below this threshold",
     )
     parser.add_argument(
+        "--failed-matches-to-refractory",
+        type=int,
+        help="Number of failed template matches before entering refractory period (default: disabled)",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -185,6 +190,7 @@ def main():
         refractory_sec=args.refractory_seconds,
         shift_sec=args.window_shift_seconds,
         skip_probability_threshold=args.skip_probability_threshold,
+        failed_matches_to_refractory=args.failed_matches_to_refractory,
         debug=args.debug,
     )
 

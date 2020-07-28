@@ -111,7 +111,7 @@ class Raven:
     shift_sec: float = DEFAULT_SHIFT_SECONDS
         Seconds to shift overlapping window by
 
-    refractory_sec: float = 2
+    skip_probability_threshold: float = 0.0
         Skip additional template calculations if probability is below this threshold
 
     refractory_sec: float = 2
@@ -142,6 +142,7 @@ class Raven:
         shift_sec: float = DEFAULT_SHIFT_SECONDS,
         refractory_sec: float = 2.0,
         skip_probability_threshold: float = 0.0,
+        failed_matches_to_refractory: typing.Optional[int] = None,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
         debug: bool = False,
     ):
@@ -162,6 +163,8 @@ class Raven:
         self.minimum_matches = minimum_matches
         self.distance_threshold = distance_threshold
         self.skip_probability_threshold = skip_probability_threshold
+        self.refractory_sec = refractory_sec
+        self.failed_matches_to_refractory = failed_matches_to_refractory
 
         # Dynamic time warping calculation
         self.dtw = template_dtw or DynamicTimeWarping()
@@ -206,6 +209,7 @@ class Raven:
             )
         )
         self.refractory_chunks_left = 0
+        self.failed_matches = 0
         self.match_seconds: typing.Optional[float] = None
 
         # If True, log DTW predictions
@@ -271,11 +275,17 @@ class Raven:
 
         List of matching template indexes
         """
+        matching_indexes: typing.List[int] = []
+
         if self.refractory_chunks_left > 0:
             self.refractory_chunks_left -= 1
+
+            if self.refractory_chunks_left <= 0:
+                _LOGGER.debug("Exiting refractory period")
+
             # In refractory period after wake word was detected.
             # Ignore any incoming audio.
-            return []
+            return matching_indexes
 
         # Test chunk for silence/speech
         chunk_start = chunk_index * self.vad_chunk_bytes
@@ -291,9 +301,8 @@ class Raven:
 
         if self.template_chunks_left <= 0:
             # No speech recently, so reset and ignore chunk.
-            self.template_audio_buffer = bytes()
-            self.template_mfcc = None
-            return []
+            self._reset_state()
+            return matching_indexes
 
         self.template_audio_buffer += chunk
 
@@ -340,19 +349,28 @@ class Raven:
                 matching_indexes = self._process_window(window_mfcc)
                 if matching_indexes:
                     # Clear buffers to avoid multiple detections and entire refractory period
-                    self.template_audio_buffer = bytes()
-                    self.template_mfcc = None
-                    self.refractory_chunks_left = self.num_refractory_chunks
+                    self._reset_state()
+                    self._begin_refractory()
 
                     # Record time for debugging
                     self.match_seconds = time.perf_counter() - match_start_time
 
                     return matching_indexes
 
+                # Check for failure state
+                self.failed_matches += 1
+                if (self.failed_matches_to_refractory is not None) and (
+                    self.failed_matches >= self.failed_matches_to_refractory
+                ):
+                    # Enter refractory period after too many failed template matches in a row
+                    self._reset_state()
+                    self._begin_refractory()
+                    return matching_indexes
+
             self.template_mfcc = self.template_mfcc[last_row + 1 :]
 
         # No detections
-        return []
+        return matching_indexes
 
     def _process_window(self, window_mfcc: np.ndarray) -> typing.List[int]:
         """Process a single template-sized window of MFCC features.
@@ -411,6 +429,17 @@ class Raven:
                 return matching_indexes
 
         return matching_indexes
+
+    def _reset_state(self):
+        """Reset VAD state machine."""
+        self.template_audio_buffer = bytes()
+        self.template_mfcc = None
+        self.failed_matches = 0
+
+    def _begin_refractory(self):
+        """Enter refractory state where audio is ignored."""
+        self.refractory_chunks_left = self.num_refractory_chunks
+        _LOGGER.debug("Enter refractory for %s second(s)", self.refractory_sec)
 
     # -------------------------------------------------------------------------
 
