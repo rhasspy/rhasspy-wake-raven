@@ -167,7 +167,7 @@ def main():
         "average_match_seconds": average_match_seconds,
     }
 
-    json.dump(results, sys.stdout, indent=4)
+    json.dump(results, sys.stdout, indent=4, ensure_ascii=False)
 
 
 # -----------------------------------------------------------------------------

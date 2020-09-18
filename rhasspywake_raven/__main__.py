@@ -441,7 +441,7 @@ def output_thread_proc(dict_queue):
         if output_dict is None:
             break
 
-        print(json.dumps(output_dict), flush=True)
+        print(json.dumps(output_dict), flush=True, ensure_ascii=False)
 
 
 # -----------------------------------------------------------------------------
