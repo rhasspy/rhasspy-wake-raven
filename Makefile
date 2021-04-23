@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: reformat check dist install test
+.PHONY: reformat check dist install test build
 
 all:
 
@@ -24,3 +24,6 @@ sdist:
 
 test:
 	scripts/run-tests.sh
+
+build:
+	python3 setup.py build_ext --inplace

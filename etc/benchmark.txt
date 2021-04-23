@@ -1,0 +1,13 @@
+# Pre-optimization benchmarking results for small test
+Metric          Mean (ms)       Median (ms)     Total (ms)     
+VAD chunk       0.5403          0.0320          758.5396       
+MFCC calc       6.2534          6.1895          112.5604       
+Match win       2.3431          1.1000          595.1519       
+DTW cost        2.3349          1.0964          593.0625
+
+# Post-optimization benchmarking results for small test
+Metric          Mean (ms)       Median (ms)     Total (ms)     
+VAD chunk       0.3281          0.0324          371.1265       
+MFCC calc       5.9391          6.1096          148.4771       
+Match win       0.2950          0.2965          179.0470       
+DTW cost        0.2778          0.2738          168.6514 
