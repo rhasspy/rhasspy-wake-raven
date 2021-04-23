@@ -38,16 +38,17 @@ class DynamicTimeWarping:
         if self.cost_matrix is None:
             return None
 
-        m, n = self.cost_matrix.shape
+        cost_matrix = self.cost_matrix
+        m, n = cost_matrix.shape
         row = m - 1
         col = n - 1
         path = [(row, col)]
 
         while row or col:
             if row and col:
-                insertion = self.cost_matrix[row - 1, col]
-                deletion = self.cost_matrix[row, col - 1]
-                match = self.cost_matrix[row - 1, col - 1]
+                insertion = cost_matrix[row - 1, col]
+                deletion = cost_matrix[row, col - 1]
+                match = cost_matrix[row - 1, col - 1]
  
                 if match <= insertion and match <= deletion:
                     row -= 1
@@ -150,7 +151,7 @@ class DynamicTimeWarping:
         if keep_matrix:
             self.cost_matrix = cost_matrix[1:, 1:]
 
-        distance = cost_matrix[n][m]
+        distance = cost_matrix[n, m]
         self.distance = distance
 
         return distance
