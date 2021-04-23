@@ -5,9 +5,10 @@ Based on: https://github.com/mathquis/node-personal-wakeword
 import math
 import typing
 
+cimport numpy as cnp
+cimport cython
 import numpy as np
 import scipy.spatial.distance
-
 
 class DynamicTimeWarping:
     """Computes DTW and holds results.
@@ -33,13 +34,21 @@ class DynamicTimeWarping:
 
         return self._compute_optimal_path_with_window(x, y, window, **cost_args)
 
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
     def compute_path(self) -> typing.Optional[typing.List[typing.Tuple[int, int]]]:
         """Get actual path if cost matrix is available."""
+        cdef:
+            cnp.double_t insertion, deletion, match
+            Py_ssize_t m, n, row, col
+            cnp.ndarray[cnp.double_t, ndim=2] cost_matrix
+
         if self.cost_matrix is None:
             return None
 
         cost_matrix = self.cost_matrix
-        m, n = cost_matrix.shape
+        m = cost_matrix.shape[0]
+        n = cost_matrix.shape[1]
         row = m - 1
         col = n - 1
         path = [(row, col)]
@@ -68,10 +77,18 @@ class DynamicTimeWarping:
 
     # -------------------------------------------------------------------------
 
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
     def _compute_optimal_path(
         self, x: np.ndarray, y: np.ndarray, keep_matrix=False
     ) -> float:
         """Computes optimal path between x and y."""
+        cdef:
+            Py_ssize_t row, col
+            Py_ssize_t m, n
+            cnp.double_t distance
+            cnp.ndarray[cnp.double_t, ndim=2] cost_matrix
+
         m = len(x)
         n = len(y)
 
@@ -106,6 +123,8 @@ class DynamicTimeWarping:
 
         return distance
 
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
     def _compute_optimal_path_with_window(
         self,
         x: np.ndarray,
@@ -115,11 +134,18 @@ class DynamicTimeWarping:
         keep_matrix=False,
     ) -> float:
         """Computes optimal path between x and y using a window."""
+        cdef:
+            Py_ssize_t n, m, row, col, col_start, col_end, cwindow
+            cnp.double_t cost, distance
+            cnp.ndarray[cnp.double_t, ndim=2] distance_matrix
+            cnp.ndarray[cnp.double_t, ndim=2] cost_matrix
+
         n = len(x)
         m = len(y)
 
         # Avoid case where endpoint lies outside band
-        window = max(window, abs(m - n))
+        len_diff = m - n if m > n else n - m
+        cwindow = max(<Py_ssize_t>window, len_diff)
 
         # Need 2-D arrays for distance calculation
         if len(x.shape) == 1:
