@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 
+import numpy as np
 from rhasspysilence import WebRtcVadRecorder
 from rhasspysilence.const import SilenceMethod
 
@@ -156,6 +157,11 @@ def main():
         help="Number of failed template matches before entering refractory period (default: disabled)",
     )
     parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Track timings and report benchmark results on exit",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print DEBUG messages to the console"
     )
     args = parser.parse_args()
@@ -223,6 +229,7 @@ def main():
             "skip_probability_threshold": args.skip_probability_threshold,
             "failed_matches_to_refractory": args.failed_matches_to_refractory,
             "debug": args.debug,
+            "benchmark": args.benchmark,
         }
 
         # Apply settings
@@ -313,6 +320,9 @@ def main():
         output_queue.put(None)
         _LOGGER.debug("Waiting for output thread...")
         output_thread.join()
+
+        if args.benchmark:
+            print_benchmark(ravens)
 
 
 # -----------------------------------------------------------------------------
@@ -462,6 +472,72 @@ class FakeStdin:
 
         # Empty chunk
         return bytes()
+
+
+# -----------------------------------------------------------------------------
+
+
+def print_benchmark(ravens: typing.Iterable[RavenInstance], out_file=sys.stderr):
+    """Print results of benchmarking to console"""
+
+    def fmt(n: float) -> str:
+        return "{0:0.4f}".format(n)
+
+    def col(s: str) -> str:
+        return "{0:15}".format(s)
+
+    for i, raven_inst in enumerate(ravens):
+        raven = raven_inst.raven
+
+        print("Benchmark Results for Raven", i, file=out_file)
+        print("", file=out_file)
+        print(
+            col("Metric"),
+            col("Mean (ms)"),
+            col("Median (ms)"),
+            col("Total (ms)"),
+            file=out_file,
+        )
+
+        # Time to process single VAD-sized chunk of audio
+        process_times = np.array(raven.time_process_vad_chunk) * 1000
+        print(
+            col("VAD chunk"),
+            col(fmt(np.mean(process_times))),
+            col(fmt(np.median(process_times))),
+            col(fmt(np.sum(process_times))),
+            file=out_file,
+        )
+
+        # Time to compute MFCCs
+        mfcc_times = np.array(raven.time_mfcc) * 1000
+        print(
+            col("MFCC calc"),
+            col(fmt(np.mean(mfcc_times))),
+            col(fmt(np.median(mfcc_times))),
+            col(fmt(np.sum(mfcc_times))),
+            file=out_file,
+        )
+
+        # Time to check template-sized window for match
+        match_times = np.array(raven.time_match) * 1000
+        print(
+            col("Match win"),
+            col(fmt(np.mean(match_times))),
+            col(fmt(np.median(match_times))),
+            col(fmt(np.sum(match_times))),
+            file=out_file,
+        )
+
+        # Time to compute DTW cost
+        dtw_times = np.array(raven.time_dtw) * 1000
+        print(
+            col("DTW cost"),
+            col(fmt(np.mean(dtw_times))),
+            col(fmt(np.median(dtw_times))),
+            col(fmt(np.sum(dtw_times))),
+            file=out_file,
+        )
 
 
 # -----------------------------------------------------------------------------

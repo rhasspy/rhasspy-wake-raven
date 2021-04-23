@@ -131,6 +131,9 @@ class Raven:
 
     debug: bool = False
         If True, template probability calculations are logged
+
+    benchmark: bool = False
+        If True, calculation timings are stored
     """
 
     DEFAULT_SHIFT_SECONDS = 0.02
@@ -151,6 +154,7 @@ class Raven:
         failed_matches_to_refractory: typing.Optional[int] = None,
         recorder: typing.Optional[WebRtcVadRecorder] = None,
         debug: bool = False,
+        benchmark: bool = False,
     ):
         self.templates = templates
         assert self.templates, "No templates"
@@ -233,6 +237,23 @@ class Raven:
             None for _ in self.templates
         ]
 
+        # ------------
+        # Benchmarking
+        # ------------
+        self.benchmark = benchmark
+
+        # Seconds to process an entire VAD chunk
+        self.time_process_vad_chunk: typing.List[float] = []
+
+        # Seconds to compute single MFCC
+        self.time_mfcc: typing.List[float] = []
+
+        # Seconds to check template-sized window for a match
+        self.time_match: typing.List[float] = []
+
+        # Seconds to compute DTW cost
+        self.time_dtw: typing.List[float] = []
+
     def process_chunk(self, chunk: bytes, keep_audio: bool = False) -> typing.List[int]:
         """Process a single chunk of raw audio data.
 
@@ -256,7 +277,16 @@ class Raven:
         if num_vad_chunks > 0:
             for i in range(num_vad_chunks):
                 # Process single VAD-sized chunk
+                process_chunk_start_time = time.perf_counter()
                 matching_indexes = self._process_vad_chunk(i, keep_audio=keep_audio)
+                process_chunk_end_time = time.perf_counter()
+
+                if self.benchmark:
+                    # Track total time to process a VAD-sized chunk
+                    self.time_process_vad_chunk.append(
+                        process_chunk_end_time - process_chunk_start_time
+                    )
+
                 if matching_indexes:
                     # Detection - reset and return immediately
                     self.vad_audio_buffer = bytes()
@@ -348,8 +378,12 @@ class Raven:
                 # Add to existing MFCC matrix
                 self.template_mfcc = np.vstack((self.template_mfcc, buffer_mfcc))
 
+            mfcc_end_time = time.perf_counter()
+            if self.benchmark:
+                # Track MFCC calculation time
+                self.time_mfcc.append(mfcc_end_time - mfcc_start_time)
+
             if self.debug:
-                mfcc_end_time = time.perf_counter()
                 _LOGGER.debug(
                     "MFCC for %s byte(s) in %s seconds",
                     len(buffer_chunk),
@@ -368,13 +402,19 @@ class Raven:
 
                 window_mfcc = self.template_mfcc[row : row + self.shifts_per_template]
                 matching_indexes = self._process_window(window_mfcc)
+
+                match_end_time = time.perf_counter()
+                if self.benchmark:
+                    # Track match time
+                    self.time_match.append(match_end_time - match_start_time)
+
                 if matching_indexes:
                     # Clear buffers to avoid multiple detections and entire refractory period
                     self._reset_state()
                     self._begin_refractory()
 
                     # Record time for debugging
-                    self.match_seconds = time.perf_counter() - match_start_time
+                    self.match_seconds = match_end_time - match_start_time
 
                     return matching_indexes
 
@@ -420,8 +460,13 @@ class Raven:
             # Compute detection probability
             probability = self.distance_to_probability(normalized_distance)
 
+            dtw_end_time = time.perf_counter()
+
+            if self.benchmark:
+                # Track DTW cost time
+                self.time_dtw.append(dtw_end_time - dtw_start_time)
+
             if self.debug:
-                dtw_end_time = time.perf_counter()
                 _LOGGER.debug(
                     "%s %s: prob=%s, norm_dist=%s, dist=%s, dtw_time=%s, template_time=%s",
                     self.keyword_name,
