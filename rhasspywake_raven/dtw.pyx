@@ -7,8 +7,16 @@ import typing
 
 cimport numpy as cnp
 cimport cython
+from libc.stdlib cimport malloc, free
+from cpython.list cimport PyList_New, PyList_SET_ITEM
+from cpython.ref cimport Py_INCREF
+
 import numpy as np
 import scipy.spatial.distance
+
+ctypedef struct PathNode:
+    Py_ssize_t row
+    Py_ssize_t col
 
 class DynamicTimeWarping:
     """Computes DTW and holds results.
@@ -40,8 +48,11 @@ class DynamicTimeWarping:
         """Get actual path if cost matrix is available."""
         cdef:
             cnp.double_t insertion, deletion, match
-            Py_ssize_t m, n, row, col
+            Py_ssize_t m, n, row, col, path_size, i
             cnp.ndarray[cnp.double_t, ndim=2] cost_matrix
+            PathNode* path
+            list result_list
+            tuple result_item
 
         if self.cost_matrix is None:
             return None
@@ -51,29 +62,46 @@ class DynamicTimeWarping:
         n = cost_matrix.shape[1]
         row = m - 1
         col = n - 1
-        path = [(row, col)]
 
-        while row or col:
-            if row and col:
-                insertion = cost_matrix[row - 1, col]
-                deletion = cost_matrix[row, col - 1]
-                match = cost_matrix[row - 1, col - 1]
- 
-                if match <= insertion and match <= deletion:
+        path = <PathNode*>malloc((m + n) * sizeof(PathNode))
+        if path == NULL:
+            raise MemoryError()
+
+        try:
+            path_size = 1
+            path[0] = PathNode(row, col)
+
+            while row or col:
+                if row and col:
+                    insertion = cost_matrix[row - 1, col]
+                    deletion = cost_matrix[row, col - 1]
+                    match = cost_matrix[row - 1, col - 1]
+
+                    if match <= insertion and match <= deletion:
+                        row -= 1
+                        col -= 1
+                    elif insertion <= deletion:
+                        row -= 1
+                    else:
+                        col -= 1
+                elif row:
                     row -= 1
+                elif col:
                     col -= 1
-                elif insertion <= deletion:
-                    row -= 1
-                else:
-                    col -= 1
-            elif row:
-                row -= 1
-            elif col:
-                col -= 1
 
-            path.append((row, col))
+                path[path_size] = PathNode(row, col)
+                path_size += 1
 
-        return list(reversed(path))
+            result_list = PyList_New(path_size)
+            for i in range(path_size, 0, -1):
+                result_item = (path[i-1].row, path[i-1].col)
+                Py_INCREF(result_item)
+                PyList_SET_ITEM(result_list, i-1, result_item)
+
+        finally:
+            free(path)
+
+        return result_list
 
     # -------------------------------------------------------------------------
 
