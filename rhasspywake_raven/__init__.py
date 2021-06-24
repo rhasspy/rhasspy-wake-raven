@@ -10,6 +10,7 @@ import python_speech_features
 import scipy.io.wavfile
 from rhasspysilence import WebRtcVadRecorder
 
+# pylint: disable=E0611
 from .dtw import DynamicTimeWarping
 
 _LOGGER = logging.getLogger("rhasspy-wake-raven")

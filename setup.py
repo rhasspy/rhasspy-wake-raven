@@ -1,5 +1,6 @@
 """Setup script for rhasspy-wake-raven package"""
 import sys
+import typing
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +33,7 @@ class BuildExt(build_ext):
         "msvc": ["/EHsc", "/O2", "/std:c++11", "/W4"],
         "unix": ["-O3", "-std=c++11", "-Wextra", "-Wall", "-Wconversion", "-g0"],
     }
-    l_opts = {"msvc": [], "unix": []}
+    l_opts: typing.Dict[str, typing.Sequence[str]] = {"msvc": [], "unix": []}
 
     if sys.platform == "darwin":
         darwin_opts = ["-stdlib=libc++", "-mmacosx-version-min=10.9"]
