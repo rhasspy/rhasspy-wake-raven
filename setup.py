@@ -30,15 +30,10 @@ class BuildExt(build_ext):
     """A custom build extension for adding compiler-specific options."""
 
     c_opts = {
-        "msvc": ["/EHsc", "/O2", "/std:c++11", "/W4"],
-        "unix": ["-O3", "-std=c++11", "-Wextra", "-Wall", "-Wconversion", "-g0"],
+        "msvc": ["/O2", "/W4"],
+        "unix": ["-O3", "-Wextra", "-Wall", "-Wconversion", "-g0"],
     }
-    l_opts: typing.Dict[str, typing.Sequence[str]] = {"msvc": [], "unix": []}
-
-    if sys.platform == "darwin":
-        darwin_opts = ["-stdlib=libc++", "-mmacosx-version-min=10.9"]
-        c_opts["unix"] += darwin_opts
-        l_opts["unix"] += darwin_opts
+    l_opts: typing.Dict[str, typing.Sequence[str]] = {"msvc": [], "unix": [], "darwin": []}
 
     def build_extensions(self):
         ct = self.compiler.compiler_type
