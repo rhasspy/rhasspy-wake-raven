@@ -65,7 +65,7 @@ setuptools.setup(
     author_email="mike@rhasspy.org",
     url="https://github.com/rhasspy/rhasspy-wake-raven",
     packages=setuptools.find_packages(),
-    package_data={"rhasspywake_raven": ["py.typed"]},
+    package_data={"rhasspywake_raven": ["py.typed", "dtw.pyi"]},
     install_requires=requirements,
     cmdclass={"build_ext": BuildExt},
     ext_modules=ext_modules,
